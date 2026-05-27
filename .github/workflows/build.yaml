@@ -8,35 +8,28 @@ on:
 
 jobs:
   build:
-    name: Build on Ubuntu
-    runs-on: ubuntu-latest
+    name: Build on Ubuntu ARM64
+    runs-on: ubuntu-24.04-arm
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        submodules: true
 
     - name: Install Dependencies
       run: |
-        sudo dpkg --add-architecture arm64
         sudo apt update
         sudo apt install -y \
           build-essential \
-          crossbuild-essential-arm64 \
           debhelper \
           bc \
           bison \
           flex \
           libssl-dev \
-          libssl-dev:arm64 \
           libelf-dev \
           libdw-dev \
           pahole
 
     - name: Building Kernel
       run: |
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
         cd linux
         date "+%Y%m%d%H%M%S" > .version
         make mvebu_defconfig

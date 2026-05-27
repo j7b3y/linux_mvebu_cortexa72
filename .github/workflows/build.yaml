@@ -26,7 +26,9 @@ jobs:
           bison \
           flex \
           libssl-dev \
+          libssl-dev:arm64 \
           libelf-dev \
+          libdw-dev \
           pahole
 
     - name: Building Kernel

@@ -318,7 +318,7 @@ mlxsw_sp_acl_rulei_create(struct mlxsw_sp_acl *acl,
 	struct mlxsw_sp_acl_rule_info *rulei;
 	int err;
 
-	rulei = kzalloc(sizeof(*rulei), GFP_KERNEL);
+	rulei = kzalloc_obj(*rulei);
 	if (!rulei)
 		return ERR_PTR(-ENOMEM);
 
@@ -1024,7 +1024,7 @@ int mlxsw_sp_acl_rule_get_stats(struct mlxsw_sp *mlxsw_sp,
 	rulei = mlxsw_sp_acl_rule_rulei(rule);
 	if (rulei->counter_valid) {
 		err = mlxsw_sp_flow_counter_get(mlxsw_sp, rulei->counter_index,
-						&current_packets,
+						false, &current_packets,
 						&current_bytes);
 		if (err)
 			return err;

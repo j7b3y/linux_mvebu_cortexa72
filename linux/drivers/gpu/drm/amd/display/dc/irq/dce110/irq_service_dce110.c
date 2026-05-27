@@ -61,27 +61,27 @@ static bool hpd_ack(struct irq_service *irq_service,
 	return true;
 }
 
-static const struct irq_source_info_funcs hpd_irq_info_funcs = {
+static struct irq_source_info_funcs hpd_irq_info_funcs  = {
 	.set = NULL,
 	.ack = hpd_ack
 };
 
-static const struct irq_source_info_funcs hpd_rx_irq_info_funcs = {
+static struct irq_source_info_funcs hpd_rx_irq_info_funcs = {
 	.set = NULL,
 	.ack = NULL
 };
 
-static const struct irq_source_info_funcs pflip_irq_info_funcs = {
+static struct irq_source_info_funcs pflip_irq_info_funcs = {
 	.set = NULL,
 	.ack = NULL
 };
 
-static const struct irq_source_info_funcs vblank_irq_info_funcs = {
+static struct irq_source_info_funcs vblank_irq_info_funcs = {
 	.set = dce110_vblank_set,
 	.ack = NULL
 };
 
-static const struct irq_source_info_funcs vupdate_irq_info_funcs = {
+static struct irq_source_info_funcs vupdate_irq_info_funcs = {
 	.set = NULL,
 	.ack = NULL
 };
@@ -229,7 +229,7 @@ bool dce110_vblank_set(struct irq_service *irq_service,
 	return true;
 }
 
-static const struct irq_source_info_funcs dummy_irq_info_funcs = {
+static struct irq_source_info_funcs dummy_irq_info_funcs = {
 	.set = dal_irq_service_dummy_set,
 	.ack = dal_irq_service_dummy_ack
 };
@@ -419,8 +419,7 @@ static void dce110_irq_construct(struct irq_service *irq_service,
 struct irq_service *
 dal_irq_service_dce110_create(struct irq_service_init_data *init_data)
 {
-	struct irq_service *irq_service = kzalloc(sizeof(*irq_service),
-						  GFP_KERNEL);
+	struct irq_service *irq_service = kzalloc_obj(*irq_service);
 
 	if (!irq_service)
 		return NULL;

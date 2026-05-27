@@ -34,7 +34,7 @@ EXPORT_SYMBOL_GPL(ulpi_write);
 
 /* -------------------------------------------------------------------------- */
 
-static int ulpi_match(struct device *dev, struct device_driver *driver)
+static int ulpi_match(struct device *dev, const struct device_driver *driver)
 {
 	struct ulpi_driver *drv = to_ulpi_driver(driver);
 	struct ulpi *ulpi = to_ulpi_dev(dev);
@@ -286,12 +286,15 @@ static int ulpi_register(struct device *dev, struct ulpi *ulpi)
 	ACPI_COMPANION_SET(&ulpi->dev, ACPI_COMPANION(dev));
 
 	ret = ulpi_of_register(ulpi);
-	if (ret)
+	if (ret) {
+		kfree(ulpi);
 		return ret;
+	}
 
 	ret = ulpi_read_id(ulpi);
 	if (ret) {
 		of_node_put(ulpi->dev.of_node);
+		kfree(ulpi);
 		return ret;
 	}
 
@@ -324,17 +327,16 @@ struct ulpi *ulpi_register_interface(struct device *dev,
 	struct ulpi *ulpi;
 	int ret;
 
-	ulpi = kzalloc(sizeof(*ulpi), GFP_KERNEL);
+	ulpi = kzalloc_obj(*ulpi);
 	if (!ulpi)
 		return ERR_PTR(-ENOMEM);
 
 	ulpi->ops = ops;
 
 	ret = ulpi_register(dev, ulpi);
-	if (ret) {
-		kfree(ulpi);
+	if (ret)
 		return ERR_PTR(ret);
-	}
+
 
 	return ulpi;
 }

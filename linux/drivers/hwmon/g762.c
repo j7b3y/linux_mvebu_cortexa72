@@ -44,8 +44,9 @@
 #define DRVNAME "g762"
 
 static const struct i2c_device_id g762_id[] = {
-	{ "g762", 0 },
-	{ "g763", 0 },
+	{ "g761" },
+	{ "g762" },
+	{ "g763" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, g762_id);
@@ -1083,15 +1084,16 @@ static int g762_probe(struct i2c_client *client)
 	data->client = client;
 	mutex_init(&data->update_lock);
 
+	/* Get configuration via DT ... */
+	ret = g762_of_clock_enable(client);
+	if (ret)
+		return ret;
+
 	/* Enable fan failure detection and fan out of control protection */
 	ret = g762_fan_init(dev);
 	if (ret)
 		return ret;
 
-	/* Get configuration via DT ... */
-	ret = g762_of_clock_enable(client);
-	if (ret)
-		return ret;
 	ret = g762_of_prop_import(client);
 	if (ret)
 		return ret;

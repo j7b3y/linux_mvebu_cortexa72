@@ -12,7 +12,7 @@
  * Copyright (C) 2011 Peter Kooiman <pkooiman@gmail.com>
  */
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <linux/completion.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -418,7 +418,7 @@ static int irtoy_probe(struct usb_interface *intf,
 		return -ENODEV;
 	}
 
-	irtoy = kzalloc(sizeof(*irtoy), GFP_KERNEL);
+	irtoy = kzalloc_obj(*irtoy);
 	if (!irtoy)
 		return -ENOMEM;
 

@@ -13,6 +13,10 @@ description: |
   This documents describes the devicetree bindings for a mmc-host controller
   child node describing a mmc-card / an eMMC.
 
+  It's possible to define a fixed partition table for an eMMC for the user
+  partition, the 2 BOOT partition (boot1/2) and the 4 GP (gp1/2/3/4) if supported
+  by the eMMC.
+
 properties:
   compatible:
     const: mmc-card
@@ -26,17 +30,15 @@ properties:
       Use this to indicate that the mmc-card has a broken hpi
       implementation, and that hpi should not be used.
 
-  block:
-    $ref: /schemas/block/block-device.yaml#
-    description:
-      Represents the block storage provided by an SD card or the
-      main hardware partition of an eMMC.
-
 patternProperties:
-  '^boot[0-9]+':
-    $ref: /schemas/block/block-device.yaml#
-    description:
-      Represents a boot hardware partition on an eMMC.
+  "^partitions(-boot[12]|-gp[14])?$":
+    type: object
+    additionalProperties: true
+
+    properties:
+      compatible:
+        contains:
+          const: fixed-partitions
 
 required:
   - compatible
@@ -55,36 +57,33 @@ examples:
             reg = <0>;
             broken-hpi;
 
-            block {
-                partitions {
-                    cal_data: block-partition-rf {
-                        partnum = <3>;
-                        partname = "rf";
+            partitions {
+                compatible = "fixed-partitions";
 
-                        nvmem-layout {
-                            compatible = "fixed-layout";
-                            #address-cells = <1>;
-                            #size-cells = <1>;
+                #address-cells = <1>;
+                #size-cells = <1>;
 
-                            eeprom@0 {
-                                reg = <0x0 0x1000>;
-                            };
-                        };
-                    };
+                partition@0 {
+                    label = "kernel"; /* Kernel */
+                    reg = <0x0 0x2000000>; /* 32 MB */
+                };
+
+                partition@2000000 {
+                    label = "rootfs";
+                    reg = <0x2000000 0x40000000>; /* 1GB */
                 };
             };
 
-            boot1 {
-                nvmem-layout {
-                    compatible = "fixed-layout";
-                    #address-cells = <1>;
-                    #size-cells = <1>;
+            partitions-boot1 {
+                compatible = "fixed-partitions";
 
-                    macaddr: macaddr@a {
-                        compatible = "mac-base";
-                        reg = <0xa 0x6>;
-                        #nvmem-cell-cells = <1>;
-                    };
+                #address-cells = <1>;
+                #size-cells = <1>;
+
+                partition@0 {
+                    label = "bl";
+                    reg = <0x0 0x2000000>; /* 32MB */
+                    read-only;
                 };
             };
         };

@@ -240,7 +240,7 @@ void nr_destroy_socket(struct sock *);
  */
 static void nr_destroy_timer(struct timer_list *t)
 {
-	struct sock *sk = from_timer(sk, t, sk_timer);
+	struct sock *sk = timer_container_of(sk, t, sk_timer);
 	bh_lock_sock(sk);
 	sock_hold(sk);
 	nr_destroy_socket(sk);
@@ -487,7 +487,7 @@ static struct sock *nr_make_new(struct sock *osk)
 	sock_init_data(NULL, sk);
 
 	sk->sk_type     = osk->sk_type;
-	sk->sk_priority = osk->sk_priority;
+	sk->sk_priority = READ_ONCE(osk->sk_priority);
 	sk->sk_protocol = osk->sk_protocol;
 	sk->sk_rcvbuf   = osk->sk_rcvbuf;
 	sk->sk_sndbuf   = osk->sk_sndbuf;
@@ -561,7 +561,7 @@ static int nr_release(struct socket *sock)
 	return 0;
 }
 
-static int nr_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+static int nr_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int addr_len)
 {
 	struct sock *sk = sock->sk;
 	struct nr_sock *nr = nr_sk(sk);
@@ -632,8 +632,8 @@ static int nr_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	return 0;
 }
 
-static int nr_connect(struct socket *sock, struct sockaddr *uaddr,
-	int addr_len, int flags)
+static int nr_connect(struct socket *sock, struct sockaddr_unsized *uaddr,
+		      int addr_len, int flags)
 {
 	struct sock *sk = sock->sk;
 	struct nr_sock *nr = nr_sk(sk);
@@ -772,8 +772,8 @@ out_release:
 	return err;
 }
 
-static int nr_accept(struct socket *sock, struct socket *newsock, int flags,
-		     bool kern)
+static int nr_accept(struct socket *sock, struct socket *newsock,
+		     struct proto_accept_arg *arg)
 {
 	struct sk_buff *skb;
 	struct sock *newsk;
@@ -805,7 +805,7 @@ static int nr_accept(struct socket *sock, struct socket *newsock, int flags,
 		if (skb)
 			break;
 
-		if (flags & O_NONBLOCK) {
+		if (arg->flags & O_NONBLOCK) {
 			err = -EWOULDBLOCK;
 			break;
 		}
@@ -1401,7 +1401,7 @@ static int __init nr_proto_init(void)
 		goto unregister_proto;
 	}
 
-	dev_nr = kcalloc(nr_ndevs, sizeof(struct net_device *), GFP_KERNEL);
+	dev_nr = kzalloc_objs(struct net_device *, nr_ndevs);
 	if (!dev_nr) {
 		pr_err("NET/ROM: %s - unable to allocate device array\n",
 		       __func__);

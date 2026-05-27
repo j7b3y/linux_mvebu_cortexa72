@@ -35,7 +35,6 @@
 #define NVRAM_HEADER			0x48534C46	/* FLSH */
 #define POT_MAGIC1			0x54544f50	/* POTT */
 #define POT_MAGIC2			0x504f		/* OP */
-#define T_METER_MAGIC			0x4D540000	/* MT */
 #define ML_MAGIC1			0x39685a42
 #define ML_MAGIC2			0x26594131
 #define TRX_MAGIC			0x30524448
@@ -96,7 +95,7 @@ static int bcm47xxpart_parse(struct mtd_info *master,
 	uint32_t blocksize = master->erasesize;
 	int trx_parts[2]; /* Array with indexes of TRX partitions */
 	int trx_num = 0; /* Number of found TRX partitions */
-	int possible_nvram_sizes[] = { 0x8000, 0xF000, 0x10000, };
+	static const int possible_nvram_sizes[] = { 0x8000, 0xF000, 0x10000, };
 	int err;
 
 	/*
@@ -107,8 +106,7 @@ static int bcm47xxpart_parse(struct mtd_info *master,
 		blocksize = 0x1000;
 
 	/* Alloc */
-	parts = kcalloc(BCM47XXPART_MAX_PARTS, sizeof(struct mtd_partition),
-			GFP_KERNEL);
+	parts = kzalloc_objs(struct mtd_partition, BCM47XXPART_MAX_PARTS);
 	if (!parts)
 		return -ENOMEM;
 
@@ -176,15 +174,6 @@ static int bcm47xxpart_parse(struct mtd_info *master,
 		if (buf[0x010 / 4] == ML_MAGIC1 &&
 		    buf[0x014 / 4] == ML_MAGIC2) {
 			bcm47xxpart_add_part(&parts[curr_part++], "ML", offset,
-					     MTD_WRITEABLE);
-			continue;
-		}
-
-		/* T_Meter */
-		if ((le32_to_cpu(buf[0x000 / 4]) & 0xFFFF0000) == T_METER_MAGIC &&
-		    (le32_to_cpu(buf[0x030 / 4]) & 0xFFFF0000) == T_METER_MAGIC &&
-		    (le32_to_cpu(buf[0x060 / 4]) & 0xFFFF0000) == T_METER_MAGIC) {
-			bcm47xxpart_add_part(&parts[curr_part++], "T_Meter", offset,
 					     MTD_WRITEABLE);
 			continue;
 		}

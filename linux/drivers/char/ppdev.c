@@ -689,7 +689,7 @@ static int pp_open(struct inode *inode, struct file *file)
 	if (minor >= PARPORT_MAX)
 		return -ENXIO;
 
-	pp = kmalloc(sizeof(struct pp_struct), GFP_KERNEL);
+	pp = kmalloc_obj(struct pp_struct);
 	if (!pp)
 		return -ENOMEM;
 
@@ -786,7 +786,6 @@ static const struct class ppdev_class = {
 
 static const struct file_operations pp_fops = {
 	.owner		= THIS_MODULE,
-	.llseek		= no_llseek,
 	.read		= pp_read,
 	.write		= pp_write,
 	.poll		= pp_poll,
@@ -839,7 +838,6 @@ static struct parport_driver pp_driver = {
 	.probe		= pp_probe,
 	.match_port	= pp_attach,
 	.detach		= pp_detach,
-	.devmodel	= true,
 };
 
 static int __init ppdev_init(void)
@@ -882,5 +880,6 @@ static void __exit ppdev_cleanup(void)
 module_init(ppdev_init);
 module_exit(ppdev_cleanup);
 
+MODULE_DESCRIPTION("Support for user-space parallel port device drivers");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_CHARDEV_MAJOR(PP_MAJOR);

@@ -6,8 +6,6 @@
 
 #if defined(CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_EXTEND)
 #define do_extend_cmdline 1
-#elif defined(CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE)
-#define do_extend_cmdline 1
 #else
 #define do_extend_cmdline 0
 #endif
@@ -23,7 +21,6 @@ static int node_offset(void *fdt, const char *node_path)
 	return offset;
 }
 
-#ifndef CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE
 static int setprop(void *fdt, const char *node_path, const char *property,
 		   void *val_array, int size)
 {
@@ -32,7 +29,6 @@ static int setprop(void *fdt, const char *node_path, const char *property,
 		return offset;
 	return fdt_setprop(fdt, offset, property, val_array, size);
 }
-#endif
 
 static int setprop_string(void *fdt, const char *node_path,
 			  const char *property, const char *string)
@@ -43,7 +39,6 @@ static int setprop_string(void *fdt, const char *node_path,
 	return fdt_setprop_string(fdt, offset, property, string);
 }
 
-#ifndef CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE
 static int setprop_cell(void *fdt, const char *node_path,
 			const char *property, uint32_t val)
 {
@@ -52,7 +47,6 @@ static int setprop_cell(void *fdt, const char *node_path,
 		return offset;
 	return fdt_setprop_cell(fdt, offset, property, val);
 }
-#endif
 
 static const void *getprop(const void *fdt, const char *node_path,
 			   const char *property, int *len)
@@ -65,7 +59,6 @@ static const void *getprop(const void *fdt, const char *node_path,
 	return fdt_getprop(fdt, offset, property, len);
 }
 
-#ifndef CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE
 static uint32_t get_cell_size(const void *fdt)
 {
 	int len;
@@ -76,74 +69,6 @@ static uint32_t get_cell_size(const void *fdt)
 		cell_size = fdt32_to_cpu(*size_len);
 	return cell_size;
 }
-
-#endif
-
-#if defined(CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE)
-
-static char *append_rootblock(char *dest, const char *str, int len, void *fdt)
-{
-	const char *ptr, *end;
-	const char *root="root=";
-	int i, l;
-	const char *rootblock;
-
-	//ARM doesn't have __HAVE_ARCH_STRSTR, so search manually
-	ptr = str - 1;
-
-	do {
-		//first find an 'r' at the begining or after a space
-		do {
-			ptr++;
-			ptr = strchr(ptr, 'r');
-			if (!ptr)
-				goto no_append;
-
-		} while (ptr != str && *(ptr-1) != ' ');
-
-		//then check for the rest
-		for(i = 1; i <= 4; i++)
-			if(*(ptr+i) != *(root+i)) break;
-
-	} while (i != 5);
-
-	end = strchr(ptr, ' ');
-	end = end ? (end - 1) : (strchr(ptr, 0) - 1);
-
-	//find partition number (assumes format root=/dev/mtdXX | /dev/mtdblockXX | yy:XX )
-	for( i = 0; end >= ptr && *end >= '0' && *end <= '9'; end--, i++);
-	ptr = end + 1;
-
-	/* if append-rootblock property is set use it to append to command line */
-	rootblock = getprop(fdt, "/chosen", "append-rootblock", &l);
-	if (rootblock == NULL)
-		goto no_append;
-
-	if (*dest != ' ') {
-		*dest = ' ';
-		dest++;
-		len++;
-	}
-
-	if (len + l + i <= COMMAND_LINE_SIZE) {
-		memcpy(dest, rootblock, l);
-		dest += l - 1;
-		memcpy(dest, ptr, i);
-		dest += i;
-	}
-
-	return dest;
-
-no_append:
-	len = strlen(str);
-	if (len + 1 < COMMAND_LINE_SIZE) {
-		memcpy(dest, str, len);
-		dest += len;
-	}
-
-	return dest;
-}
-#endif
 
 static void merge_fdt_bootargs(void *fdt, const char *fdt_cmdline)
 {
@@ -164,28 +89,18 @@ static void merge_fdt_bootargs(void *fdt, const char *fdt_cmdline)
 
 	/* and append the ATAG_CMDLINE */
 	if (fdt_cmdline) {
-
-#if defined(CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE)
-		//save original bootloader args
-		//and append ubi.mtd with root partition number to current cmdline
-		setprop_string(fdt, "/chosen", "bootloader-args", fdt_cmdline);
-		ptr = append_rootblock(ptr, fdt_cmdline, len, fdt);
-
-#else
 		len = strlen(fdt_cmdline);
 		if (ptr - cmdline + len + 2 < COMMAND_LINE_SIZE) {
 			*ptr++ = ' ';
 			memcpy(ptr, fdt_cmdline, len);
 			ptr += len;
 		}
-#endif
 	}
 	*ptr = '\0';
 
 	setprop_string(fdt, "/chosen", "bootargs", cmdline);
 }
 
-#ifndef CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE
 static void hex_str(char *out, uint32_t value)
 {
 	uint32_t digit;
@@ -203,7 +118,6 @@ static void hex_str(char *out, uint32_t value)
 	}
 	*out = '\0';
 }
-#endif
 
 /*
  * Convert and fold provided ATAGs into the provided FDT.
@@ -218,11 +132,9 @@ int atags_to_fdt(void *atag_list, void *fdt, int total_space)
 	struct tag *atag = atag_list;
 	/* In the case of 64 bits memory size, need to reserve 2 cells for
 	 * address and size for each bank */
-#ifndef CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE
 	__be32 mem_reg_property[2 * 2 * NR_BANKS];
-	int memsize, memcount = 0;
-#endif
-	int ret;
+	int memcount = 0;
+	int ret, memsize;
 
 	/* make sure we've got an aligned pointer */
 	if ((u32)atag_list & 0x3)
@@ -257,9 +169,7 @@ int atags_to_fdt(void *atag_list, void *fdt, int total_space)
 			else
 				setprop_string(fdt, "/chosen", "bootargs",
 					       atag->u.cmdline.cmdline);
-		}
-#ifndef CONFIG_ARM_ATAG_DTB_COMPAT_CMDLINE_MANGLE
-		else if (atag->hdr.tag == ATAG_MEM) {
+		} else if (atag->hdr.tag == ATAG_MEM) {
 			if (memcount >= sizeof(mem_reg_property)/4)
 				continue;
 			if (!atag->u.mem.size)
@@ -303,10 +213,6 @@ int atags_to_fdt(void *atag_list, void *fdt, int total_space)
 		setprop(fdt, "/memory", "reg", mem_reg_property,
 			4 * memcount * memsize);
 	}
-#else
-
-	}
-#endif
 
 	return fdt_pack(fdt);
 }

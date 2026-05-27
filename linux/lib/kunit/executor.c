@@ -12,6 +12,8 @@
  */
 extern struct kunit_suite * const __kunit_suites_start[];
 extern struct kunit_suite * const __kunit_suites_end[];
+extern struct kunit_suite * const __kunit_init_suites_start[];
+extern struct kunit_suite * const __kunit_init_suites_end[];
 
 static char *action_param;
 
@@ -27,17 +29,35 @@ const char *kunit_action(void)
 	return action_param;
 }
 
-static char *filter_glob_param;
-static char *filter_param;
-static char *filter_action_param;
+/*
+ * Run KUnit tests after initialization
+ */
+#ifdef CONFIG_KUNIT_AUTORUN_ENABLED
+static bool autorun_param = true;
+#else
+static bool autorun_param;
+#endif
+module_param_named(autorun, autorun_param, bool, 0);
+MODULE_PARM_DESC(autorun, "Run KUnit tests after initialization");
 
-module_param_named(filter_glob, filter_glob_param, charp, 0400);
+bool kunit_autorun(void)
+{
+	return autorun_param;
+}
+
+#define PARAM_FROM_CONFIG(config) (config[0] ? config : NULL)
+
+static char *filter_glob_param = PARAM_FROM_CONFIG(CONFIG_KUNIT_DEFAULT_FILTER_GLOB);
+static char *filter_param = PARAM_FROM_CONFIG(CONFIG_KUNIT_DEFAULT_FILTER);
+static char *filter_action_param = PARAM_FROM_CONFIG(CONFIG_KUNIT_DEFAULT_FILTER_ACTION);
+
+module_param_named(filter_glob, filter_glob_param, charp, 0600);
 MODULE_PARM_DESC(filter_glob,
 		"Filter which KUnit test suites/tests run at boot-time, e.g. list* or list*.*del_test");
-module_param_named(filter, filter_param, charp, 0400);
+module_param_named(filter, filter_param, charp, 0600);
 MODULE_PARM_DESC(filter,
 		"Filter which KUnit test suites/tests run at boot-time using attributes, e.g. speed>slow");
-module_param_named(filter_action, filter_action_param, charp, 0400);
+module_param_named(filter_action, filter_action_param, charp, 0600);
 MODULE_PARM_DESC(filter_action,
 		"Changes behavior of filtered tests using attributes, valid values are:\n"
 		"<none>: do not run filtered tests as normal\n"
@@ -68,31 +88,25 @@ struct kunit_glob_filter {
 static int kunit_parse_glob_filter(struct kunit_glob_filter *parsed,
 				    const char *filter_glob)
 {
-	const int len = strlen(filter_glob);
 	const char *period = strchr(filter_glob, '.');
 
 	if (!period) {
-		parsed->suite_glob = kzalloc(len + 1, GFP_KERNEL);
+		parsed->suite_glob = kstrdup(filter_glob, GFP_KERNEL);
 		if (!parsed->suite_glob)
 			return -ENOMEM;
-
 		parsed->test_glob = NULL;
-		strcpy(parsed->suite_glob, filter_glob);
 		return 0;
 	}
 
-	parsed->suite_glob = kzalloc(period - filter_glob + 1, GFP_KERNEL);
+	parsed->suite_glob = kstrndup(filter_glob, period - filter_glob, GFP_KERNEL);
 	if (!parsed->suite_glob)
 		return -ENOMEM;
 
-	parsed->test_glob = kzalloc(len - (period - filter_glob) + 1, GFP_KERNEL);
+	parsed->test_glob = kstrdup(period + 1, GFP_KERNEL);
 	if (!parsed->test_glob) {
 		kfree(parsed->suite_glob);
 		return -ENOMEM;
 	}
-
-	strncpy(parsed->suite_glob, filter_glob, period - filter_glob);
-	strncpy(parsed->test_glob, period + 1, len - (period - filter_glob));
 
 	return 0;
 }
@@ -117,7 +131,7 @@ kunit_filter_glob_tests(const struct kunit_suite *const suite, const char *test_
 	if (!copy)
 		return ERR_PTR(-ENOMEM);
 
-	filtered = kcalloc(n + 1, sizeof(*filtered), GFP_KERNEL);
+	filtered = kzalloc_objs(*filtered, n + 1);
 	if (!filtered) {
 		kfree(copy);
 		return ERR_PTR(-ENOMEM);
@@ -165,7 +179,7 @@ kunit_filter_suites(const struct kunit_suite_set *suite_set,
 
 	const size_t max = suite_set->end - suite_set->start;
 
-	copy = kcalloc(max, sizeof(*filtered.start), GFP_KERNEL);
+	copy = kzalloc_objs(*copy, max);
 	if (!copy) { /* won't be able to run anything, return an empty set */
 		return filtered;
 	}
@@ -180,7 +194,7 @@ kunit_filter_suites(const struct kunit_suite_set *suite_set,
 	/* Parse attribute filters */
 	if (filters) {
 		filter_count = kunit_get_filter_count(filters);
-		parsed_filters = kcalloc(filter_count, sizeof(*parsed_filters), GFP_KERNEL);
+		parsed_filters = kzalloc_objs(*parsed_filters, filter_count);
 		if (!parsed_filters) {
 			*err = -ENOMEM;
 			goto free_parsed_glob;
@@ -264,13 +278,14 @@ free_copy:
 void kunit_exec_run_tests(struct kunit_suite_set *suite_set, bool builtin)
 {
 	size_t num_suites = suite_set->end - suite_set->start;
+	bool autorun = kunit_autorun();
 
-	if (builtin || num_suites) {
+	if (autorun && (builtin || num_suites)) {
 		pr_info("KTAP version 1\n");
 		pr_info("1..%zu\n", num_suites);
 	}
 
-	__kunit_test_suites_init(suite_set->start, num_suites);
+	__kunit_test_suites_init(suite_set->start, num_suites, autorun);
 }
 
 void kunit_exec_list_tests(struct kunit_suite_set *suite_set, bool include_attr)
@@ -296,6 +311,37 @@ void kunit_exec_list_tests(struct kunit_suite_set *suite_set, bool include_attr)
 	}
 }
 
+struct kunit_suite_set kunit_merge_suite_sets(struct kunit_suite_set init_suite_set,
+		struct kunit_suite_set suite_set)
+{
+	struct kunit_suite_set total_suite_set = {NULL, NULL};
+	struct kunit_suite **total_suite_start = NULL;
+	size_t init_num_suites, num_suites, suite_size;
+	int i = 0;
+
+	init_num_suites = init_suite_set.end - init_suite_set.start;
+	num_suites = suite_set.end - suite_set.start;
+	suite_size = sizeof(suite_set.start);
+
+	/* Allocate memory for array of all kunit suites */
+	total_suite_start = kmalloc_array(init_num_suites + num_suites, suite_size, GFP_KERNEL);
+	if (!total_suite_start)
+		return total_suite_set;
+
+	/* Append and mark init suites and then append all other kunit suites */
+	memcpy(total_suite_start, init_suite_set.start, init_num_suites * suite_size);
+	for (i = 0; i < init_num_suites; i++)
+		total_suite_start[i]->is_init = true;
+
+	memcpy(total_suite_start + init_num_suites, suite_set.start, num_suites * suite_size);
+
+	/* Set kunit suite set start and end */
+	total_suite_set.start = total_suite_start;
+	total_suite_set.end = total_suite_start + (init_num_suites + num_suites);
+
+	return total_suite_set;
+}
+
 #if IS_BUILTIN(CONFIG_KUNIT)
 
 static char *kunit_shutdown;
@@ -317,21 +363,41 @@ static void kunit_handle_shutdown(void)
 
 int kunit_run_all_tests(void)
 {
-	struct kunit_suite_set suite_set = {
+	struct kunit_suite_set suite_set = {NULL, NULL};
+	struct kunit_suite_set filtered_suite_set = {NULL, NULL};
+	struct kunit_suite_set init_suite_set = {
+		__kunit_init_suites_start, __kunit_init_suites_end,
+	};
+	struct kunit_suite_set normal_suite_set = {
 		__kunit_suites_start, __kunit_suites_end,
 	};
+	size_t init_num_suites = init_suite_set.end - init_suite_set.start;
 	int err = 0;
+
+	if (init_num_suites > 0) {
+		suite_set = kunit_merge_suite_sets(init_suite_set, normal_suite_set);
+		if (!suite_set.start)
+			goto out;
+	} else
+		suite_set = normal_suite_set;
+
 	if (!kunit_enabled()) {
 		pr_info("kunit: disabled\n");
-		goto out;
+		goto free_out;
 	}
 
 	if (filter_glob_param || filter_param) {
-		suite_set = kunit_filter_suites(&suite_set, filter_glob_param,
+		filtered_suite_set = kunit_filter_suites(&suite_set, filter_glob_param,
 				filter_param, filter_action_param, &err);
+
+		/* Free original suite set before using filtered suite set */
+		if (init_num_suites > 0)
+			kfree(suite_set.start);
+		suite_set = filtered_suite_set;
+
 		if (err) {
 			pr_err("kunit executor: error filtering suites: %d\n", err);
-			goto out;
+			goto free_out;
 		}
 	}
 
@@ -344,9 +410,12 @@ int kunit_run_all_tests(void)
 	else
 		pr_err("kunit executor: unknown action '%s'\n", action_param);
 
-	if (filter_glob_param || filter_param) { /* a copy was made of each suite */
+free_out:
+	if (filter_glob_param || filter_param)
 		kunit_free_suite_set(suite_set);
-	}
+	else if (init_num_suites > 0)
+		/* Don't use kunit_free_suite_set because suites aren't individually allocated */
+		kfree(suite_set.start);
 
 out:
 	kunit_handle_shutdown();

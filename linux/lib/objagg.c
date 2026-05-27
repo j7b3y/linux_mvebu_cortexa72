@@ -424,7 +424,7 @@ static struct objagg_obj *__objagg_obj_get(struct objagg *objagg, void *obj)
  *
  * There are 3 main options this function wraps:
  * 1) The object according to "obj" already exist. In that case
- *    the reference counter is incrementes and the object is returned.
+ *    the reference counter is incremented and the object is returned.
  * 2) The object does not exist, but it can be aggregated within
  *    another object. In that case, user ops->delta_create() is called
  *    to obtain delta data and a new object is created with returned
@@ -525,7 +525,7 @@ struct objagg *objagg_create(const struct objagg_ops *ops,
 		    !ops->delta_destroy))
 		return ERR_PTR(-EINVAL);
 
-	objagg = kzalloc(sizeof(*objagg), GFP_KERNEL);
+	objagg = kzalloc_obj(*objagg);
 	if (!objagg)
 		return ERR_PTR(-ENOMEM);
 	objagg->ops = ops;
@@ -610,8 +610,8 @@ const struct objagg_stats *objagg_stats_get(struct objagg *objagg)
 	struct objagg_obj *objagg_obj;
 	int i;
 
-	objagg_stats = kzalloc(struct_size(objagg_stats, stats_info,
-					   objagg->obj_count), GFP_KERNEL);
+	objagg_stats = kzalloc_flex(*objagg_stats, stats_info,
+				    objagg->obj_count);
 	if (!objagg_stats)
 		return ERR_PTR(-ENOMEM);
 
@@ -786,11 +786,11 @@ static struct objagg_tmp_graph *objagg_tmp_graph_create(struct objagg *objagg)
 	struct objagg_obj *objagg_obj;
 	int i, j;
 
-	graph = kzalloc(sizeof(*graph), GFP_KERNEL);
+	graph = kzalloc_obj(*graph);
 	if (!graph)
 		return NULL;
 
-	graph->nodes = kcalloc(nodes_count, sizeof(*graph->nodes), GFP_KERNEL);
+	graph->nodes = kzalloc_objs(*graph->nodes, nodes_count);
 	if (!graph->nodes)
 		goto err_nodes_alloc;
 	graph->nodes_count = nodes_count;
@@ -930,7 +930,7 @@ struct objagg_hints *objagg_hints_get(struct objagg *objagg,
 	struct objagg_hints *objagg_hints;
 	int err;
 
-	objagg_hints = kzalloc(sizeof(*objagg_hints), GFP_KERNEL);
+	objagg_hints = kzalloc_obj(*objagg_hints);
 	if (!objagg_hints)
 		return ERR_PTR(-ENOMEM);
 
@@ -1010,9 +1010,8 @@ objagg_hints_stats_get(struct objagg_hints *objagg_hints)
 	struct objagg_hints_node *hnode;
 	int i;
 
-	objagg_stats = kzalloc(struct_size(objagg_stats, stats_info,
-					   objagg_hints->node_count),
-			       GFP_KERNEL);
+	objagg_stats = kzalloc_flex(*objagg_stats, stats_info,
+				    objagg_hints->node_count);
 	if (!objagg_stats)
 		return ERR_PTR(-ENOMEM);
 

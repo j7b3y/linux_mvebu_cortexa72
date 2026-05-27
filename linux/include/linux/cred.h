@@ -12,6 +12,7 @@
 #include <linux/init.h>
 #include <linux/key.h>
 #include <linux/atomic.h>
+#include <linux/refcount.h>
 #include <linux/uidgid.h>
 #include <linux/sched.h>
 #include <linux/sched/user.h>
@@ -19,11 +20,13 @@
 struct cred;
 struct inode;
 
+extern struct task_struct init_task;
+
 /*
  * COW Supplementary groups list
  */
 struct group_info {
-	atomic_t	usage;
+	refcount_t	usage;
 	int		ngroups;
 	kgid_t		gid[];
 } __randomize_layout;
@@ -39,7 +42,7 @@ struct group_info {
  */
 static inline struct group_info *get_group_info(struct group_info *gi)
 {
-	atomic_inc(&gi->usage);
+	refcount_inc(&gi->usage);
 	return gi;
 }
 
@@ -49,7 +52,7 @@ static inline struct group_info *get_group_info(struct group_info *gi)
  */
 #define put_group_info(group_info)			\
 do {							\
-	if (atomic_dec_and_test(&(group_info)->usage))	\
+	if (refcount_dec_and_test(&(group_info)->usage))	\
 		groups_free(group_info);		\
 } while (0)
 
@@ -147,18 +150,20 @@ struct cred {
 
 extern void __put_cred(struct cred *);
 extern void exit_creds(struct task_struct *);
-extern int copy_creds(struct task_struct *, unsigned long);
+extern int copy_creds(struct task_struct *, u64);
 extern const struct cred *get_task_cred(struct task_struct *);
 extern struct cred *cred_alloc_blank(void);
 extern struct cred *prepare_creds(void);
 extern struct cred *prepare_exec_creds(void);
 extern int commit_creds(struct cred *);
 extern void abort_creds(struct cred *);
-extern const struct cred *override_creds(const struct cred *);
-extern void revert_creds(const struct cred *);
 extern struct cred *prepare_kernel_cred(struct task_struct *);
+static inline const struct cred *kernel_cred(void)
+{
+	/* shut up sparse */
+	return rcu_dereference_raw(init_task.cred);
+}
 extern int set_security_override(struct cred *, u32);
-extern int set_security_override_from_ctx(struct cred *, const char *);
 extern int set_create_files_as(struct cred *, struct inode *);
 extern int cred_fscmp(const struct cred *, const struct cred *);
 extern void __init cred_init(void);
@@ -171,25 +176,33 @@ static inline bool cap_ambient_invariant_ok(const struct cred *cred)
 					  cred->cap_inheritable));
 }
 
-/**
- * get_new_cred - Get a reference on a new set of credentials
- * @cred: The new credentials to reference
- *
- * Get a reference on the specified set of new credentials.  The caller must
- * release the reference.
- */
-static inline struct cred *get_new_cred(struct cred *cred)
+static inline const struct cred *override_creds(const struct cred *override_cred)
 {
-	atomic_long_inc(&cred->usage);
-	return cred;
+	return rcu_replace_pointer(current->cred, override_cred, 1);
 }
 
+static inline const struct cred *revert_creds(const struct cred *revert_cred)
+{
+	return rcu_replace_pointer(current->cred, revert_cred, 1);
+}
+
+DEFINE_CLASS(override_creds,
+	     const struct cred *,
+	     revert_creds(_T),
+	     override_creds(override_cred), const struct cred *override_cred)
+
+#define scoped_with_creds(cred) \
+	scoped_class(override_creds, __UNIQUE_ID(label), cred)
+
+#define scoped_with_kernel_creds() scoped_with_creds(kernel_cred())
+
 /**
- * get_cred - Get a reference on a set of credentials
+ * get_cred_many - Get references on a set of credentials
  * @cred: The credentials to reference
+ * @nr: Number of references to acquire
  *
- * Get a reference on the specified set of credentials.  The caller must
- * release the reference.  If %NULL is passed, it is returned with no action.
+ * Get references on the specified set of credentials.  The caller must release
+ * all acquired reference.  If %NULL is passed, it is returned with no action.
  *
  * This is used to deal with a committed set of credentials.  Although the
  * pointer is const, this will temporarily discard the const and increment the
@@ -197,13 +210,28 @@ static inline struct cred *get_new_cred(struct cred *cred)
  * accidental alteration of a set of credentials that should be considered
  * immutable.
  */
-static inline const struct cred *get_cred(const struct cred *cred)
+static inline const struct cred *get_cred_many(const struct cred *cred, int nr)
 {
 	struct cred *nonconst_cred = (struct cred *) cred;
 	if (!cred)
 		return cred;
 	nonconst_cred->non_rcu = 0;
-	return get_new_cred(nonconst_cred);
+	atomic_long_add(nr, &nonconst_cred->usage);
+	return cred;
+}
+
+/*
+ * get_cred - Get a reference on a set of credentials
+ * @cred: The credentials to reference
+ *
+ * Get a reference on the specified set of credentials.  The caller must
+ * release the reference.  If %NULL is passed, it is returned with no action.
+ *
+ * This is used to deal with a committed set of credentials.
+ */
+static inline const struct cred *get_cred(const struct cred *cred)
+{
+	return get_cred_many(cred, 1);
 }
 
 static inline const struct cred *get_cred_rcu(const struct cred *cred)
@@ -220,6 +248,7 @@ static inline const struct cred *get_cred_rcu(const struct cred *cred)
 /**
  * put_cred - Release a reference to a set of credentials
  * @cred: The credentials to release
+ * @nr: Number of references to release
  *
  * Release a reference to a set of credentials, deleting them when the last ref
  * is released.  If %NULL is passed, nothing is done.
@@ -228,15 +257,34 @@ static inline const struct cred *get_cred_rcu(const struct cred *cred)
  * on task_struct are attached by const pointers to prevent accidental
  * alteration of otherwise immutable credential sets.
  */
-static inline void put_cred(const struct cred *_cred)
+static inline void put_cred_many(const struct cred *_cred, int nr)
 {
 	struct cred *cred = (struct cred *) _cred;
 
 	if (cred) {
-		if (atomic_long_dec_and_test(&(cred)->usage))
+		if (atomic_long_sub_and_test(nr, &cred->usage))
 			__put_cred(cred);
 	}
 }
+
+/*
+ * put_cred - Release a reference to a set of credentials
+ * @cred: The credentials to release
+ *
+ * Release a reference to a set of credentials, deleting them when the last ref
+ * is released.  If %NULL is passed, nothing is done.
+ */
+static inline void put_cred(const struct cred *cred)
+{
+	put_cred_many(cred, 1);
+}
+
+DEFINE_CLASS(prepare_creds,
+	      struct cred *,
+	      if (_T) put_cred(_T),
+	      prepare_creds(), void)
+
+DEFINE_FREE(put_cred, struct cred *, if (!IS_ERR_OR_NULL(_T)) put_cred(_T))
 
 /**
  * current_cred - Access the current task's subjective credentials

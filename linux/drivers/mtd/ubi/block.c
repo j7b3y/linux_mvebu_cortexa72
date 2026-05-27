@@ -41,7 +41,6 @@
 #include <linux/scatterlist.h>
 #include <linux/idr.h>
 #include <asm/div64.h>
-#include <linux/root_dev.h>
 
 #include "ubi-media.h"
 #include "ubi.h"
@@ -200,7 +199,7 @@ static blk_status_t ubiblock_read(struct request *req)
 	 * and ubi_read_sg() will check that limit.
 	 */
 	ubi_sgl_init(&pdu->usgl);
-	blk_rq_map_sg(req->q, req, pdu->usgl.sg);
+	blk_rq_map_sg(req, pdu->usgl.sg);
 
 	while (bytes_left) {
 		/*
@@ -283,12 +282,12 @@ static void ubiblock_release(struct gendisk *gd)
 	mutex_unlock(&dev->dev_mutex);
 }
 
-static int ubiblock_getgeo(struct block_device *bdev, struct hd_geometry *geo)
+static int ubiblock_getgeo(struct gendisk *disk, struct hd_geometry *geo)
 {
 	/* Some tools might require this information */
 	geo->heads = 1;
 	geo->cylinders = 1;
-	geo->sectors = get_capacity(bdev->bd_disk);
+	geo->sectors = get_capacity(disk);
 	geo->start = 0;
 	return 0;
 }
@@ -349,6 +348,9 @@ static int calc_disk_capacity(struct ubi_volume_info *vi, u64 *disk_capacity)
 
 int ubiblock_create(struct ubi_volume_info *vi)
 {
+	struct queue_limits lim = {
+		.max_segments		= UBI_MAX_SG_COUNT,
+	};
 	struct ubiblock *dev;
 	struct gendisk *gd;
 	u64 disk_capacity;
@@ -366,7 +368,7 @@ int ubiblock_create(struct ubi_volume_info *vi)
 		goto out_unlock;
 	}
 
-	dev = kzalloc(sizeof(struct ubiblock), GFP_KERNEL);
+	dev = kzalloc_obj(struct ubiblock);
 	if (!dev) {
 		ret = -ENOMEM;
 		goto out_unlock;
@@ -381,20 +383,21 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	dev->tag_set.ops = &ubiblock_mq_ops;
 	dev->tag_set.queue_depth = 64;
 	dev->tag_set.numa_node = NUMA_NO_NODE;
-	dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE | BLK_MQ_F_BLOCKING;
+	dev->tag_set.flags = BLK_MQ_F_BLOCKING;
 	dev->tag_set.cmd_size = sizeof(struct ubiblock_pdu);
 	dev->tag_set.driver_data = dev;
 	dev->tag_set.nr_hw_queues = 1;
 
 	ret = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (ret) {
-		dev_err(disk_to_dev(dev->gd), "blk_mq_alloc_tag_set failed");
+		pr_err("ubiblock%d_%d: blk_mq_alloc_tag_set failed\n",
+			dev->ubi_num, dev->vol_id);
 		goto out_free_dev;
 	}
 
 
 	/* Initialize the gendisk of this ubiblock device */
-	gd = blk_mq_alloc_disk(&dev->tag_set, dev);
+	gd = blk_mq_alloc_disk(&dev->tag_set, &lim, dev);
 	if (IS_ERR(gd)) {
 		ret = PTR_ERR(gd);
 		goto out_free_tags;
@@ -405,8 +408,8 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	gd->minors = 1;
 	gd->first_minor = idr_alloc(&ubiblock_minor_idr, dev, 0, 0, GFP_KERNEL);
 	if (gd->first_minor < 0) {
-		dev_err(disk_to_dev(gd),
-			"block: dynamic minor allocation failed");
+		pr_err("ubiblock%d_%d: block: dynamic minor allocation failed\n",
+			dev->ubi_num, dev->vol_id);
 		ret = -ENODEV;
 		goto out_cleanup_disk;
 	}
@@ -417,7 +420,6 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	dev->gd = gd;
 
 	dev->rq = gd->queue;
-	blk_queue_max_segments(dev->rq, UBI_MAX_SG_COUNT);
 
 	list_add_tail(&dev->list, &ubiblock_devices);
 
@@ -429,22 +431,13 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	dev_info(disk_to_dev(dev->gd), "created from ubi%d:%d(%s)",
 		 dev->ubi_num, dev->vol_id, vi->name);
 	mutex_unlock(&devices_mutex);
-
-	if (!strcmp(vi->name, "rootfs") &&
-	    IS_ENABLED(CONFIG_MTD_ROOTFS_ROOT_DEV) &&
-	    ROOT_DEV == 0) {
-		pr_notice("ubiblock: device ubiblock%d_%d (%s) set to be root filesystem\n",
-			  dev->ubi_num, dev->vol_id, vi->name);
-		ROOT_DEV = MKDEV(gd->major, gd->first_minor);
-	}
-
 	return 0;
 
 out_remove_minor:
 	list_del(&dev->list);
 	idr_remove(&ubiblock_minor_idr, gd->first_minor);
 out_cleanup_disk:
-	put_disk(dev->gd);
+	put_disk(gd);
 out_free_tags:
 	blk_mq_free_tag_set(&dev->tag_set);
 out_free_dev:
@@ -457,13 +450,15 @@ out_unlock:
 
 static void ubiblock_cleanup(struct ubiblock *dev)
 {
+	int id = dev->gd->first_minor;
+
 	/* Stop new requests to arrive */
 	del_gendisk(dev->gd);
 	/* Finally destroy the blk queue */
 	dev_info(disk_to_dev(dev->gd), "released");
 	put_disk(dev->gd);
 	blk_mq_free_tag_set(&dev->tag_set);
-	idr_remove(&ubiblock_minor_idr, dev->gd->first_minor);
+	idr_remove(&ubiblock_minor_idr, id);
 }
 
 int ubiblock_remove(struct ubi_volume_info *vi)
@@ -580,47 +575,10 @@ match_volume_desc(struct ubi_volume_info *vi, const char *name, int ubi_num, int
 	return true;
 }
 
-#define UBIFS_NODE_MAGIC  0x06101831
-static inline int ubi_vol_is_ubifs(struct ubi_volume_desc *desc)
-{
-	int ret;
-	uint32_t magic_of, magic;
-	ret = ubi_read(desc, 0, (char *)&magic_of, 0, 4);
-	if (ret)
-		return 0;
-	magic = le32_to_cpu(magic_of);
-	return magic == UBIFS_NODE_MAGIC;
-}
-
-static void ubiblock_create_auto_rootfs(struct ubi_volume_info *vi)
-{
-	int ret, is_ubifs;
-	struct ubi_volume_desc *desc;
-
-	if (strcmp(vi->name, "rootfs") &&
-	    strcmp(vi->name, "fit"))
-		return;
-
-	desc = ubi_open_volume(vi->ubi_num, vi->vol_id, UBI_READONLY);
-	if (IS_ERR(desc))
-		return;
-
-	is_ubifs = ubi_vol_is_ubifs(desc);
-	ubi_close_volume(desc);
-	if (is_ubifs)
-		return;
-
-	ret = ubiblock_create(vi);
-	if (ret)
-		pr_err("UBI error: block: can't add '%s' volume, err=%d\n",
-			vi->name, ret);
-}
-
 static void
 ubiblock_create_from_param(struct ubi_volume_info *vi)
 {
 	int i, ret = 0;
-	bool got_param = false;
 	struct ubiblock_param *p;
 
 	/*
@@ -633,7 +591,6 @@ ubiblock_create_from_param(struct ubi_volume_info *vi)
 		if (!match_volume_desc(vi, p->name, p->ubi_num, p->vol_id))
 			continue;
 
-		got_param = true;
 		ret = ubiblock_create(vi);
 		if (ret) {
 			pr_err(
@@ -642,10 +599,6 @@ ubiblock_create_from_param(struct ubi_volume_info *vi)
 		}
 		break;
 	}
-
-	/* auto-attach "rootfs" volume if existing and non-ubifs */
-	if (!got_param && IS_ENABLED(CONFIG_MTD_ROOTFS_ROOT_DEV))
-		ubiblock_create_auto_rootfs(vi);
 }
 
 static int ubiblock_notify(struct notifier_block *nb,
@@ -717,7 +670,7 @@ err_unreg:
 	return ret;
 }
 
-void __exit ubiblock_exit(void)
+void ubiblock_exit(void)
 {
 	ubi_unregister_volume_notifier(&ubiblock_notifier);
 	ubiblock_remove_all();

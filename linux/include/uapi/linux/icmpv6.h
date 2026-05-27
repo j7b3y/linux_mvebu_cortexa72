@@ -112,6 +112,7 @@ struct icmp6hdr {
 #define ICMPV6_MOBILE_PREFIX_ADV	147
 
 #define ICMPV6_MRDISC_ADV		151
+#define ICMPV6_MRDISC_SOL		152
 
 #define ICMPV6_MSG_MAX          255
 
@@ -125,8 +126,6 @@ struct icmp6hdr {
 #define ICMPV6_PORT_UNREACH		4
 #define ICMPV6_POLICY_FAIL		5
 #define ICMPV6_REJECT_ROUTE		6
-
-#define ICMPV6_FAILED_POLICY		ICMPV6_POLICY_FAIL
 
 /*
  *	Codes for Time Exceeded

@@ -139,7 +139,7 @@ static struct ipoib_mcast *ipoib_mcast_alloc(struct net_device *dev)
 {
 	struct ipoib_mcast *mcast;
 
-	mcast = kzalloc(sizeof(*mcast), GFP_ATOMIC);
+	mcast = kzalloc_obj(*mcast, GFP_ATOMIC);
 	if (!mcast)
 		return NULL;
 
@@ -287,8 +287,7 @@ static int ipoib_mcast_join_finish(struct ipoib_mcast *mcast,
 
 	ah = ipoib_create_ah(dev, priv->pd, &av);
 	if (IS_ERR(ah)) {
-		ipoib_warn(priv, "ib_address_create failed %ld\n",
-			   -PTR_ERR(ah));
+		ipoib_warn(priv, "ib_address_create failed %pe\n", ah);
 		/* use original error */
 		return PTR_ERR(ah);
 	}
@@ -981,7 +980,7 @@ struct ipoib_mcast_iter *ipoib_mcast_iter_init(struct net_device *dev)
 {
 	struct ipoib_mcast_iter *iter;
 
-	iter = kmalloc(sizeof(*iter), GFP_KERNEL);
+	iter = kmalloc_obj(*iter);
 	if (!iter)
 		return NULL;
 

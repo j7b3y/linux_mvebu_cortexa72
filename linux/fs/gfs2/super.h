@@ -47,7 +47,6 @@ void gfs2_statfs_change_out(const struct gfs2_statfs_change_host *sc,
 void update_statfs(struct gfs2_sbd *sdp, struct buffer_head *m_bh);
 int gfs2_statfs_sync(struct super_block *sb, int type);
 void gfs2_freeze_func(struct work_struct *work);
-void gfs2_thaw_freeze_initiator(struct super_block *sb);
 
 void free_local_statfs_inodes(struct gfs2_sbd *sdp);
 struct inode *find_local_statfs_inode(struct gfs2_sbd *sdp,
@@ -60,8 +59,8 @@ extern const struct export_operations gfs2_export_ops;
 extern const struct super_operations gfs2_super_ops;
 extern const struct dentry_operations gfs2_dops;
 
-extern const struct xattr_handler *gfs2_xattr_handlers_max[];
-extern const struct xattr_handler **gfs2_xattr_handlers_min;
+extern const struct xattr_handler * const gfs2_xattr_handlers_max[];
+extern const struct xattr_handler * const *gfs2_xattr_handlers_min;
 
 #endif /* __SUPER_DOT_H__ */
 

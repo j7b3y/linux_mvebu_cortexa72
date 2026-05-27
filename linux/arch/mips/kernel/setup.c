@@ -13,9 +13,9 @@
 #include <linux/init.h>
 #include <linux/cpu.h>
 #include <linux/delay.h>
+#include <linux/hex.h>
 #include <linux/ioport.h>
 #include <linux/export.h>
-#include <linux/screen_info.h>
 #include <linux/memblock.h>
 #include <linux/initrd.h>
 #include <linux/root_dev.h>
@@ -43,6 +43,7 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/smp-ops.h>
+#include <asm/mips-cps.h>
 #include <asm/prom.h>
 #include <asm/fw/fw.h>
 
@@ -53,10 +54,6 @@ char __section(".appended_dtb") __appended_dtb[0x100000];
 struct cpuinfo_mips cpu_data[NR_CPUS] __read_mostly;
 
 EXPORT_SYMBOL(cpu_data);
-
-#ifdef CONFIG_VGA_CONSOLE
-struct screen_info screen_info;
-#endif
 
 /*
  * Setup information
@@ -90,27 +87,21 @@ static struct resource bss_resource = { .name = "Kernel bss", };
 unsigned long __kaslr_offset __ro_after_init;
 EXPORT_SYMBOL(__kaslr_offset);
 
+static void *detect_magic __initdata = detect_memory_region;
+
 #ifdef CONFIG_MIPS_AUTO_PFN_OFFSET
 unsigned long ARCH_PFN_OFFSET;
 EXPORT_SYMBOL(ARCH_PFN_OFFSET);
 #endif
 
-#ifndef CONFIG_64BIT
-static u32 detect_magic __initdata;
-#define MIPS_MEM_TEST_PATTERN		0xaa5555aa
-
 void __init detect_memory_region(phys_addr_t start, phys_addr_t sz_min, phys_addr_t sz_max)
 {
-	void *dm = (void *)KSEG1ADDR(&detect_magic);
+	void *dm = &detect_magic;
 	phys_addr_t size;
 
 	for (size = sz_min; size < sz_max; size <<= 1) {
-		__raw_writel(MIPS_MEM_TEST_PATTERN, dm);
-		if (__raw_readl(dm) == __raw_readl(dm + size)) {
-			__raw_writel(~MIPS_MEM_TEST_PATTERN, dm);
-			if (__raw_readl(dm) == __raw_readl(dm + size))
-				break;
-		}
+		if (!memcmp(dm, dm + size, sizeof(detect_magic)))
+			break;
 	}
 
 	pr_debug("Memory: %lluMB of RAM detected at 0x%llx (min: %lluMB, max: %lluMB)\n",
@@ -121,7 +112,6 @@ void __init detect_memory_region(phys_addr_t start, phys_addr_t sz_min, phys_add
 
 	memblock_add(start, size);
 }
-#endif /* CONFIG_64BIT */
 
 /*
  * Manage initrd
@@ -158,7 +148,7 @@ static unsigned long __init init_initrd(void)
 	/*
 	 * Board specific code or command line parser should have
 	 * already set up initrd_start and initrd_end. In these cases
-	 * perfom sanity checks and use them if all looks good.
+	 * perform sanity checks and use them if all looks good.
 	 */
 	if (!initrd_start || initrd_end <= initrd_start)
 		goto disable;
@@ -453,8 +443,6 @@ static void __init mips_reserve_vmcore(void)
 #endif
 }
 
-#ifdef CONFIG_KEXEC
-
 /* 64M alignment for crash kernel regions */
 #define CRASH_ALIGN	SZ_64M
 #define CRASH_ADDR_MAX	SZ_512M
@@ -465,9 +453,13 @@ static void __init mips_parse_crashkernel(void)
 	unsigned long long crash_size, crash_base;
 	int ret;
 
+	if (!IS_ENABLED(CONFIG_CRASH_RESERVE))
+		return;
+
 	total_mem = memblock_phys_mem_size();
 	ret = parse_crashkernel(boot_command_line, total_mem,
-				&crash_size, &crash_base);
+				&crash_size, &crash_base,
+				NULL, NULL, NULL);
 	if (ret != 0 || crash_size <= 0)
 		return;
 
@@ -499,6 +491,9 @@ static void __init request_crashkernel(struct resource *res)
 {
 	int ret;
 
+	if (!IS_ENABLED(CONFIG_CRASH_RESERVE))
+		return;
+
 	if (crashk_res.start == crashk_res.end)
 		return;
 
@@ -508,15 +503,6 @@ static void __init request_crashkernel(struct resource *res)
 			(unsigned long)(resource_size(&crashk_res) >> 20),
 			(unsigned long)(crashk_res.start  >> 20));
 }
-#else /* !defined(CONFIG_KEXEC)		*/
-static void __init mips_parse_crashkernel(void)
-{
-}
-
-static void __init request_crashkernel(struct resource *res)
-{
-}
-#endif /* !defined(CONFIG_KEXEC)  */
 
 static void __init check_kernel_sections_mem(void)
 {
@@ -629,8 +615,7 @@ static void __init bootcmdline_init(void)
  * kernel but generic memory management system is still entirely uninitialized.
  *
  *  o bootmem_init()
- *  o sparse_init()
- *  o paging_init()
+ *  o pagetable_init()
  *  o dma_contiguous_reserve()
  *
  * At this stage the bootmem allocator is ready to use.
@@ -680,16 +665,6 @@ static void __init arch_mem_init(char **cmdline_p)
 	mips_parse_crashkernel();
 	device_tree_init();
 
-	/*
-	 * In order to reduce the possibility of kernel panic when failed to
-	 * get IO TLB memory under CONFIG_SWIOTLB, it is better to allocate
-	 * low memory as small as possible before plat_swiotlb_setup(), so
-	 * make sparse_init() using top-down allocation.
-	 */
-	memblock_set_bottom_up(false);
-	sparse_init();
-	memblock_set_bottom_up(true);
-
 	plat_swiotlb_setup();
 
 	dma_contiguous_reserve(PFN_PHYS(max_low_pfn));
@@ -719,10 +694,7 @@ static void __init resource_init(void)
 	for_each_mem_range(i, &start, &end) {
 		struct resource *res;
 
-		res = memblock_alloc(sizeof(struct resource), SMP_CACHE_BYTES);
-		if (!res)
-			panic("%s: Failed to allocate %zu bytes\n", __func__,
-			      sizeof(struct resource));
+		res = memblock_alloc_or_panic(sizeof(struct resource), SMP_CACHE_BYTES);
 
 		res->start = start;
 		/*
@@ -799,12 +771,6 @@ void __init setup_arch(char **cmdline_p)
 	if (IS_ENABLED(CONFIG_CPU_R4X00_BUGS64))
 		check_bugs64_early();
 
-#if defined(CONFIG_VT)
-#if defined(CONFIG_VGA_CONSOLE)
-	conswitchp = &vga_con;
-#endif
-#endif
-
 	arch_mem_init(cmdline_p);
 	dmi_setup();
 
@@ -813,7 +779,7 @@ void __init setup_arch(char **cmdline_p)
 	prefill_possible_map();
 
 	cpu_cache_init();
-	paging_init();
+	pagetable_init();
 
 	memblock_dump_all();
 

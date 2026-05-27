@@ -19,21 +19,23 @@ properties:
   compatible:
     const: iei,wt61p803-puzzle-leds
 
-  "#address-cells":
+  '#address-cells':
     const: 1
 
-  "#size-cells":
+  '#size-cells':
     const: 0
 
   led@0:
-    type: object
     $ref: common.yaml
-    description: |
-      Properties for a single LED.
+    unevaluatedProperties: false
+
+    properties:
+      reg:
+        const: 0
 
 required:
   - compatible
-  - "#address-cells"
-  - "#size-cells"
+  - '#address-cells'
+  - '#size-cells'
 
 additionalProperties: false

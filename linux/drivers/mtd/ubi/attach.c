@@ -131,7 +131,7 @@ static struct ubi_ainf_volume *find_or_add_av(struct ubi_attach_info *ai,
 		return NULL;
 
 	/* The volume is absent - add it */
-	av = kzalloc(sizeof(*av), GFP_KERNEL);
+	av = kzalloc_obj(*av);
 	if (!av)
 		return ERR_PTR(-ENOMEM);
 
@@ -926,13 +926,6 @@ static bool vol_ignored(int vol_id)
 #endif
 }
 
-static bool ec_hdr_has_eof(struct ubi_ec_hdr *ech)
-{
-	return ech->padding1[0] == 'E' &&
-	       ech->padding1[1] == 'O' &&
-	       ech->padding1[2] == 'F';
-}
-
 /**
  * scan_peb - scan and process UBI headers of a PEB.
  * @ubi: UBI device description object
@@ -965,21 +958,9 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return 0;
 	}
 
-	if (!ai->eof_found) {
-		err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
-		if (err < 0)
-			return err;
-
-		if (ec_hdr_has_eof(ech)) {
-			pr_notice("UBI: EOF marker found, PEBs from %d will be erased\n",
-				pnum);
-			ai->eof_found = true;
-		}
-	}
-
-	if (ai->eof_found)
-		err = UBI_IO_FF_BITFLIPS;
-
+	err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
+	if (err < 0)
+		return err;
 	switch (err) {
 	case 0:
 		break;
@@ -1466,11 +1447,11 @@ out_ech:
 	return err;
 }
 
-static struct ubi_attach_info *alloc_ai(void)
+static struct ubi_attach_info *alloc_ai(const char *slab_name)
 {
 	struct ubi_attach_info *ai;
 
-	ai = kzalloc(sizeof(struct ubi_attach_info), GFP_KERNEL);
+	ai = kzalloc_obj(struct ubi_attach_info);
 	if (!ai)
 		return ai;
 
@@ -1480,7 +1461,7 @@ static struct ubi_attach_info *alloc_ai(void)
 	INIT_LIST_HEAD(&ai->alien);
 	INIT_LIST_HEAD(&ai->fastmap);
 	ai->volumes = RB_ROOT;
-	ai->aeb_slab_cache = kmem_cache_create("ubi_aeb_slab_cache",
+	ai->aeb_slab_cache = kmem_cache_create(slab_name,
 					       sizeof(struct ubi_ainf_peb),
 					       0, 0, NULL);
 	if (!ai->aeb_slab_cache) {
@@ -1510,7 +1491,7 @@ static int scan_fast(struct ubi_device *ubi, struct ubi_attach_info **ai)
 
 	err = -ENOMEM;
 
-	scan_ai = alloc_ai();
+	scan_ai = alloc_ai("ubi_aeb_slab_cache_fastmap");
 	if (!scan_ai)
 		goto out;
 
@@ -1576,7 +1557,7 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	int err;
 	struct ubi_attach_info *ai;
 
-	ai = alloc_ai();
+	ai = alloc_ai("ubi_aeb_slab_cache");
 	if (!ai)
 		return -ENOMEM;
 
@@ -1594,7 +1575,7 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 		if (err > 0 || mtd_is_eccerr(err)) {
 			if (err != UBI_NO_FASTMAP) {
 				destroy_ai(ai);
-				ai = alloc_ai();
+				ai = alloc_ai("ubi_aeb_slab_cache");
 				if (!ai)
 					return -ENOMEM;
 
@@ -1619,7 +1600,7 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 
 	err = ubi_read_volume_table(ubi, ai);
 	if (err)
-		goto out_ai;
+		goto out_fm;
 
 	err = ubi_wl_init(ubi, ai);
 	if (err)
@@ -1633,7 +1614,7 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	if (ubi->fm && ubi_dbg_chk_fastmap(ubi)) {
 		struct ubi_attach_info *scan_ai;
 
-		scan_ai = alloc_ai();
+		scan_ai = alloc_ai("ubi_aeb_slab_cache_dbg_chk_fastmap");
 		if (!scan_ai) {
 			err = -ENOMEM;
 			goto out_wl;
@@ -1661,6 +1642,8 @@ out_wl:
 out_vtbl:
 	ubi_free_all_volumes(ubi);
 	vfree(ubi->vtbl);
+out_fm:
+	ubi_free_fastmap(ubi);
 out_ai:
 	destroy_ai(ai);
 	return err;

@@ -19,7 +19,7 @@
 #endif
 
 #ifdef CONFIG_MMU
-#define ARM_MMU_KEEP(x)		x
+#define ARM_MMU_KEEP(x)		KEEP(x)
 #define ARM_MMU_DISCARD(x)
 #else
 #define ARM_MMU_KEEP(x)
@@ -32,6 +32,12 @@
  */
 #ifdef CONFIG_LD_IS_LLD
 #define NOCROSSREFS
+#endif
+
+#ifdef CONFIG_LD_CAN_USE_KEEP_IN_OVERLAY
+#define OVERLAY_KEEP(x)		KEEP(x)
+#else
+#define OVERLAY_KEEP(x)		x
 #endif
 
 /* Set start/end symbol names to the LMA for the section */
@@ -48,7 +54,7 @@
 #define IDMAP_TEXT							\
 		ALIGN_FUNCTION();					\
 		__idmap_text_start = .;					\
-		KEEP(*(.idmap.text))					\
+		*(.idmap.text)						\
 		__idmap_text_end = .;					\
 
 #define ARM_DISCARD							\
@@ -108,12 +114,12 @@
 	. = ALIGN(8);							\
 	.ARM.unwind_idx : {						\
 		__start_unwind_idx = .;					\
-		KEEP(*(.ARM.exidx*))					\
+		*(.ARM.exidx*)						\
 		__stop_unwind_idx = .;					\
 	}								\
 	.ARM.unwind_tab : {						\
 		__start_unwind_tab = .;					\
-		KEEP(*(.ARM.extab*))					\
+		*(.ARM.extab*)						\
 		__stop_unwind_tab = .;					\
 	}
 
@@ -125,13 +131,13 @@
 	__vectors_lma = .;						\
 	OVERLAY 0xffff0000 : NOCROSSREFS AT(__vectors_lma) {		\
 		.vectors {						\
-			KEEP(*(.vectors))				\
+			OVERLAY_KEEP(*(.vectors))			\
 		}							\
 		.vectors.bhb.loop8 {					\
-			*(.vectors.bhb.loop8)				\
+			OVERLAY_KEEP(*(.vectors.bhb.loop8))		\
 		}							\
 		.vectors.bhb.bpiall {					\
-			*(.vectors.bhb.bpiall)				\
+			OVERLAY_KEEP(*(.vectors.bhb.bpiall))		\
 		}							\
 	}								\
 	ARM_LMA(__vectors, .vectors);					\
@@ -143,7 +149,7 @@
 									\
 	__stubs_lma = .;						\
 	.stubs ADDR(.vectors) + 0x1000 : AT(__stubs_lma) {		\
-		KEEP(*(.stubs))						\
+		*(.stubs)						\
 	}								\
 	ARM_LMA(__stubs, .stubs);					\
 	. = __stubs_lma + SIZEOF(.stubs);				\

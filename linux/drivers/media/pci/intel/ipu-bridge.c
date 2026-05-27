@@ -2,7 +2,10 @@
 /* Author: Dan Scally <djrscally@gmail.com> */
 
 #include <linux/acpi.h>
+#include <acpi/acpi_bus.h>
+#include <linux/cleanup.h>
 #include <linux/device.h>
+#include <linux/dmi.h>
 #include <linux/i2c.h>
 #include <linux/mei_cl_bus.h>
 #include <linux/platform_device.h>
@@ -42,26 +45,94 @@
  * becoming apparent in the future.
  *
  * Do not add an entry for a sensor that is not actually supported.
+ *
+ * Please keep the list sorted by ACPI HID.
  */
 static const struct ipu_sensor_config ipu_supported_sensors[] = {
+	/* Himax HM11B1 */
+	IPU_SENSOR_CONFIG("HIMX11B1", 1, 384000000),
+	/* Himax HM2170 */
+	IPU_SENSOR_CONFIG("HIMX2170", 1, 384000000),
+	/* Himax HM2172 */
+	IPU_SENSOR_CONFIG("HIMX2172", 1, 384000000),
+	/* GalaxyCore GC0310 */
+	IPU_SENSOR_CONFIG("INT0310", 1, 55692000),
 	/* Omnivision OV5693 */
 	IPU_SENSOR_CONFIG("INT33BE", 1, 419200000),
+	/* Onsemi MT9M114 */
+	IPU_SENSOR_CONFIG("INT33F0", 1, 384000000),
+	/* Omnivision OV2740 */
+	IPU_SENSOR_CONFIG("INT3474", 1, 180000000),
+	/* Omnivision OV5670 */
+	IPU_SENSOR_CONFIG("INT3479", 1, 422400000),
 	/* Omnivision OV8865 */
 	IPU_SENSOR_CONFIG("INT347A", 1, 360000000),
 	/* Omnivision OV7251 */
 	IPU_SENSOR_CONFIG("INT347E", 1, 319200000),
+	/* Hynix Hi-556 */
+	IPU_SENSOR_CONFIG("INT3537", 1, 437000000),
+	/* Lontium lt6911uxe */
+	IPU_SENSOR_CONFIG("INTC10C5", 0),
+	/* Omnivision OV01A10 / OV01A1S */
+	IPU_SENSOR_CONFIG("OVTI01A0", 1, 400000000),
+	IPU_SENSOR_CONFIG("OVTI01AS", 1, 400000000),
+	/* Omnivision OV02C10 */
+	IPU_SENSOR_CONFIG("OVTI02C1", 1, 400000000),
+	/* Omnivision OV02E10 */
+	IPU_SENSOR_CONFIG("OVTI02E1", 1, 360000000),
+	/* Omnivision ov05c10 */
+	IPU_SENSOR_CONFIG("OVTI05C1", 1, 480000000),
+	/* Omnivision OV08A10 */
+	IPU_SENSOR_CONFIG("OVTI08A1", 1, 500000000),
+	/* Omnivision OV08x40 */
+	IPU_SENSOR_CONFIG("OVTI08F4", 3, 400000000, 749000000, 800000000),
+	/* Omnivision OV13B10 */
+	IPU_SENSOR_CONFIG("OVTI13B1", 1, 560000000),
+	IPU_SENSOR_CONFIG("OVTIDB10", 1, 560000000),
 	/* Omnivision OV2680 */
 	IPU_SENSOR_CONFIG("OVTI2680", 1, 331200000),
-	/* Omnivision ov8856 */
+	/* Omnivision OV8856 */
 	IPU_SENSOR_CONFIG("OVTI8856", 3, 180000000, 360000000, 720000000),
-	/* Omnivision ov2740 */
-	IPU_SENSOR_CONFIG("INT3474", 1, 360000000),
-	/* Hynix hi556 */
-	IPU_SENSOR_CONFIG("INT3537", 1, 437000000),
-	/* Omnivision ov13b10 */
-	IPU_SENSOR_CONFIG("OVTIDB10", 1, 560000000),
-	/* GalaxyCore GC0310 */
-	IPU_SENSOR_CONFIG("INT0310", 0),
+	/* Sony IMX471 */
+	IPU_SENSOR_CONFIG("SONY471A", 1, 200000000),
+	/* Toshiba T4KA3 */
+	IPU_SENSOR_CONFIG("XMCC0003", 1, 321468000),
+};
+
+/*
+ * DMI matches for laptops which have their sensor mounted upside-down
+ * without reporting a rotation of 180° in neither the SSDB nor the _PLD.
+ */
+static const struct dmi_system_id upside_down_sensor_dmi_ids[] = {
+	{
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "XPS 13 9340"),
+		},
+		.driver_data = "OVTI02C1",
+	},
+	{
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "XPS 13 9350"),
+		},
+		.driver_data = "OVTI02C1",
+	},
+	{
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "XPS 14 9440"),
+		},
+		.driver_data = "OVTI02C1",
+	},
+	{
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "XPS 16 9640"),
+		},
+		.driver_data = "OVTI02C1",
+	},
+	{} /* Terminating entry */
 };
 
 static const struct ipu_property_names prop_names = {
@@ -86,7 +157,6 @@ static const char * const ipu_vcm_types[] = {
 	"lc898212axb",
 };
 
-#if IS_ENABLED(CONFIG_ACPI)
 /*
  * Used to figure out IVSC acpi device by ipu_bridge_get_ivsc_acpi_dev()
  * instead of device and driver match to probe IVSC device.
@@ -106,11 +176,11 @@ static struct acpi_device *ipu_bridge_get_ivsc_acpi_dev(struct acpi_device *adev
 		const struct acpi_device_id *acpi_id = &ivsc_acpi_ids[i];
 		struct acpi_device *consumer, *ivsc_adev;
 
-		acpi_handle handle = acpi_device_handle(adev);
+		acpi_handle handle = acpi_device_handle(ACPI_PTR(adev));
 		for_each_acpi_dev_match(ivsc_adev, acpi_id->id, NULL, -1)
 			/* camera sensor depends on IVSC in DSDT if exist */
 			for_each_acpi_consumer_dev(ivsc_adev, consumer)
-				if (consumer->handle == handle) {
+				if (ACPI_PTR(consumer->handle) == handle) {
 					acpi_dev_put(consumer);
 					return ivsc_adev;
 				}
@@ -118,12 +188,6 @@ static struct acpi_device *ipu_bridge_get_ivsc_acpi_dev(struct acpi_device *adev
 
 	return NULL;
 }
-#else
-static struct acpi_device *ipu_bridge_get_ivsc_acpi_dev(struct acpi_device *adev)
-{
-	return NULL;
-}
-#endif
 
 static int ipu_bridge_match_ivsc_dev(struct device *dev, const void *adev)
 {
@@ -221,6 +285,12 @@ out_free_buff:
 static u32 ipu_bridge_parse_rotation(struct acpi_device *adev,
 				     struct ipu_sensor_ssdb *ssdb)
 {
+	const struct dmi_system_id *dmi_id;
+
+	dmi_id = dmi_first_match(upside_down_sensor_dmi_ids);
+	if (dmi_id && acpi_dev_hid_match(adev, dmi_id->driver_data))
+		return 180;
+
 	switch (ssdb->degree) {
 	case IPU_SENSOR_ROTATION_NORMAL:
 		return 0;
@@ -238,12 +308,8 @@ static enum v4l2_fwnode_orientation ipu_bridge_parse_orientation(struct acpi_dev
 {
 	enum v4l2_fwnode_orientation orientation;
 	struct acpi_pld_info *pld = NULL;
-	acpi_status status = AE_ERROR;
 
-#if IS_ENABLED(CONFIG_ACPI)
-	status = acpi_get_physical_device_location(adev->handle, &pld);
-#endif
-	if (ACPI_FAILURE(status)) {
+	if (!acpi_get_physical_device_location(ACPI_PTR(adev->handle), &pld)) {
 		dev_warn(ADEV_DEV(adev), "_PLD call failed, using default orientation\n");
 		return V4L2_FWNODE_ORIENTATION_EXTERNAL;
 	}
@@ -302,7 +368,7 @@ int ipu_bridge_parse_ssdb(struct acpi_device *adev, struct ipu_sensor *sensor)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(ipu_bridge_parse_ssdb, INTEL_IPU_BRIDGE);
+EXPORT_SYMBOL_NS_GPL(ipu_bridge_parse_ssdb, "INTEL_IPU_BRIDGE");
 
 static void ipu_bridge_create_fwnode_properties(
 	struct ipu_sensor *sensor,
@@ -477,9 +543,7 @@ static void ipu_bridge_create_connection_swnodes(struct ipu_bridge *bridge,
 	if (sensor->csi_dev) {
 		const char *device_hid = "";
 
-#if IS_ENABLED(CONFIG_ACPI)
 		device_hid = acpi_device_hid(sensor->ivsc_adev);
-#endif
 
 		snprintf(sensor->ivsc_name, sizeof(sensor->ivsc_name), "%s-%u",
 			 device_hid, sensor->link);
@@ -546,8 +610,8 @@ static void ipu_bridge_instantiate_vcm_work(struct work_struct *work)
 	vcm_client = i2c_acpi_new_device_by_fwnode(acpi_fwnode_handle(adev),
 						   1, &data->board_info);
 	if (IS_ERR(vcm_client)) {
-		dev_err(data->sensor, "Error instantiating VCM client: %ld\n",
-			PTR_ERR(vcm_client));
+		dev_err(data->sensor, "Error instantiating VCM client: %pe\n",
+			vcm_client);
 		goto out_pm_put;
 	}
 
@@ -588,7 +652,7 @@ int ipu_bridge_instantiate_vcm(struct device *sensor)
 		return 0;
 	}
 
-	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	data = kzalloc_obj(*data);
 	if (!data) {
 		fwnode_handle_put(vcm_fwnode);
 		return -ENOMEM;
@@ -610,7 +674,7 @@ int ipu_bridge_instantiate_vcm(struct device *sensor)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(ipu_bridge_instantiate_vcm, INTEL_IPU_BRIDGE);
+EXPORT_SYMBOL_NS_GPL(ipu_bridge_instantiate_vcm, "INTEL_IPU_BRIDGE");
 
 static int ipu_bridge_instantiate_ivsc(struct ipu_sensor *sensor)
 {
@@ -650,11 +714,7 @@ static int ipu_bridge_connect_sensor(const struct ipu_sensor_config *cfg,
 	struct acpi_device *adev = NULL;
 	int ret;
 
-#if IS_ENABLED(CONFIG_ACPI)
 	for_each_acpi_dev_match(adev, cfg->hid, NULL, -1) {
-#else
-	while (true) {
-#endif
 		if (!ACPI_PTR(adev->status.enabled))
 			continue;
 
@@ -747,15 +807,10 @@ static int ipu_bridge_ivsc_is_ready(void)
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(ipu_supported_sensors); i++) {
-#if IS_ENABLED(CONFIG_ACPI)
 		const struct ipu_sensor_config *cfg =
 			&ipu_supported_sensors[i];
 
 		for_each_acpi_dev_match(sensor_adev, cfg->hid, NULL, -1) {
-#else
-		while (true) {
-			sensor_adev = NULL;
-#endif
 			if (!ACPI_PTR(sensor_adev->status.enabled))
 				continue;
 
@@ -775,6 +830,24 @@ static int ipu_bridge_ivsc_is_ready(void)
 	return ready;
 }
 
+static int ipu_bridge_check_fwnode_graph(struct fwnode_handle *fwnode)
+{
+	struct fwnode_handle *endpoint;
+
+	if (IS_ERR_OR_NULL(fwnode))
+		return -EINVAL;
+
+	endpoint = fwnode_graph_get_next_endpoint(fwnode, NULL);
+	if (endpoint) {
+		fwnode_handle_put(endpoint);
+		return 0;
+	}
+
+	return ipu_bridge_check_fwnode_graph(fwnode->secondary);
+}
+
+static DEFINE_MUTEX(ipu_bridge_mutex);
+
 int ipu_bridge_init(struct device *dev,
 		    ipu_parse_sensor_fwnode_t parse_sensor_fwnode)
 {
@@ -783,10 +856,16 @@ int ipu_bridge_init(struct device *dev,
 	unsigned int i;
 	int ret;
 
-	if (!ipu_bridge_ivsc_is_ready())
-		return -EPROBE_DEFER;
+	guard(mutex)(&ipu_bridge_mutex);
 
-	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
+	if (!ipu_bridge_check_fwnode_graph(dev_fwnode(dev)))
+		return 0;
+
+	if (!ipu_bridge_ivsc_is_ready())
+		return dev_err_probe(dev, -EPROBE_DEFER,
+				     "waiting for IVSC to become ready\n");
+
+	bridge = kzalloc_obj(*bridge);
 	if (!bridge)
 		return -ENOMEM;
 
@@ -838,7 +917,7 @@ err_free_bridge:
 
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(ipu_bridge_init, INTEL_IPU_BRIDGE);
+EXPORT_SYMBOL_NS_GPL(ipu_bridge_init, "INTEL_IPU_BRIDGE");
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Intel IPU Sensors Bridge driver");

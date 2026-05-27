@@ -2,7 +2,7 @@
 /*
  * Device Tree file for Ctera C200-V2
  *
- * Copyright (C) 2021 Pawel Dembicki <paweldembicki@gmail.com>
+ * Copyright (C) 2022 Pawel Dembicki <paweldembicki@gmail.com>
  */
 
 /dts-v1/;
@@ -16,13 +16,6 @@
 / {
 	model = "Ctera C200 V2";
 	compatible = "ctera,c200-v2", "marvell,armada370", "marvell,armada-370-xp";
-
-	aliases {
-		led-boot = &led_status_green;
-		led-failsafe = &led_status_red;
-		led-running = &led_status_green;
-		led-upgrade = &led_status_red;
-	};
 
 	chosen {
 		bootargs = "console=ttyS0,115200";
@@ -63,34 +56,11 @@
 		};
 	};
 
-	keys {
-		compatible = "gpio-keys";
-		pinctrl-0 = <&pmx_buttons>;
+	beeper {
+		compatible = "pwm-beeper";
+		pinctrl-0 = <&pmx_beeper>;
 		pinctrl-names = "default";
-
-		power {
-			label = "Power Button";
-			linux,code = <KEY_POWER>;
-			gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>;
-		};
-
-		reset {
-			label = "Reset Button";
-			linux,code = <KEY_RESTART>;
-			gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
-		};
-
-		usb1 {
-			label = "USB1 Button";
-			linux,code = <BTN_0>;
-			gpios = <&gpio1 0 GPIO_ACTIVE_LOW>;
-		};
-
-		usb2 {
-			label = "USB2 Button";
-			linux,code = <BTN_1>;
-			gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
-		};
+		pwms = <&gpio1 31 4000>;
 	};
 
 	gpio-poweroff {
@@ -98,6 +68,36 @@
 		pinctrl-0 = <&pmx_poweroff>;
 		pinctrl-names = "default";
 		gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&pmx_buttons>;
+		pinctrl-names = "default";
+
+		button-power {
+			label = "Power Button";
+			linux,code = <KEY_POWER>;
+			gpios = <&gpio0 10 GPIO_ACTIVE_HIGH>;
+		};
+
+		button-reset {
+			label = "Reset Button";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
+		};
+
+		button-usb1 {
+			label = "USB1 Button";
+			linux,code = <BTN_0>;
+			gpios = <&gpio1 0 GPIO_ACTIVE_LOW>;
+		};
+
+		button-usb2 {
+			label = "USB2 Button";
+			linux,code = <BTN_1>;
+			gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+		};
 	};
 
 	leds {
@@ -117,8 +117,6 @@
 			function-enumerator = <2>;
 			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
-			linux,default-trigger = "usbport";
-			trigger-sources = <&usb1_port 1>, <&usb2_port 1>;
 		};
 
 		led-2 {
@@ -133,8 +131,6 @@
 			function-enumerator = <1>;
 			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio0 16 GPIO_ACTIVE_LOW>;
-			linux,default-trigger = "usbport";
-			trigger-sources = <&usb1_port 2>, <&usb2_port 2>;
 		};
 
 		led-4 {
@@ -142,7 +138,6 @@
 			function-enumerator = <2>;
 			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio1 15 GPIO_ACTIVE_LOW>;
-			linux,default-trigger = "ata2";
 		};
 
 		led-5 {
@@ -177,7 +172,7 @@
 			gpios = <&gpio1 23 GPIO_ACTIVE_LOW>;
 		};
 
-		led_status_red: led-10 {
+		led-10 {
 			function = LED_FUNCTION_STATUS;
 			color = <LED_COLOR_ID_RED>;
 			gpios = <&gpio1 24 GPIO_ACTIVE_LOW>;
@@ -188,10 +183,9 @@
 			function-enumerator = <1>;
 			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio1 25 GPIO_ACTIVE_LOW>;
-			linux,default-trigger = "ata1";
 		};
 
-		led_status_green: led-12 {
+		led-12 {
 			function = LED_FUNCTION_STATUS;
 			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio1 26 GPIO_ACTIVE_LOW>;
@@ -307,7 +301,7 @@
 			};
 
 			partition@7a00000 {
-				label = "ubi";
+				label = "rootfs";
 				reg = <0x7a00000 0x8600000>;
 			};
 		};
@@ -317,38 +311,11 @@
 &pciec {
 	status = "okay";
 
-	pcie@1,0 {
+	pcie@1,0 { /* Renesas uPD720202 USB 3.0 controller */
 		pinctrl-0 = <&pmx_pcie>;
 		pinctrl-names = "default";
 		status = "okay";
 		reset-gpios = <&gpio1 27 GPIO_ACTIVE_LOW>;
-
-		/* -[0000:00]---01.0-[01]----00.0 */
-		/* usbport trigger won't work */
-		bridge@0,1 {
-			compatible = "pci11ab,6710";
-			reg = <0x3800 0 0 0 0>;
-			#address-cells = <3>;
-			#size-cells = <2>;
-
-			usb@1,0 {
-				/* Renesas uPD720202 */
-				compatible = "pci1912,0015";
-				reg = <0x1000 0 0 0 0>;
-				#address-cells = <3>;
-				#size-cells = <2>;
-
-				usb1_port: port@1 {
-					reg = <1>;
-					#trigger-source-cells = <1>;
-				};
-
-				usb2_port: port@2 {
-					reg = <2>;
-					#trigger-source-cells = <1>;
-				};
-			};
-		};
 	};
 };
 
@@ -384,10 +351,7 @@
 		marvell,function = "gpio";
 	};
 
-	/* this gpio is connected to the pin of buzzer
-	 * leave it as is due lack of proper driver
-	 */
-	pmx_buzzer: pmx-buzzer {
+	pmx_beeper: pmx-beeper {
 		marvell,pins = "mpp63";
 		marvell,function = "gpio";
 	};

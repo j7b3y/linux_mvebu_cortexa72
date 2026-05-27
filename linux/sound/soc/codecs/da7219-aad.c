@@ -53,7 +53,7 @@ static void da7219_aad_btn_det_work(struct work_struct *work)
 	struct da7219_aad_priv *da7219_aad =
 		container_of(work, struct da7219_aad_priv, btn_det_work);
 	struct snd_soc_component *component = da7219_aad->component;
-	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(component);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	struct da7219_priv *da7219 = snd_soc_component_get_drvdata(component);
 	u8 statusa, micbias_ctrl;
 	bool micbias_up = false;
@@ -109,7 +109,7 @@ static void da7219_aad_hptest_work(struct work_struct *work)
 	struct da7219_aad_priv *da7219_aad =
 		container_of(work, struct da7219_aad_priv, hptest_work);
 	struct snd_soc_component *component = da7219_aad->component;
-	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(component);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	struct da7219_priv *da7219 = snd_soc_component_get_drvdata(component);
 
 	__le16 tonegen_freq_hptest;
@@ -351,7 +351,7 @@ static irqreturn_t da7219_aad_irq_thread(int irq, void *data)
 {
 	struct da7219_aad_priv *da7219_aad = data;
 	struct snd_soc_component *component = da7219_aad->component;
-	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(component);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	struct da7219_priv *da7219 = snd_soc_component_get_drvdata(component);
 	u8 events[DA7219_AAD_IRQ_REG_MAX];
 	u8 statusa;
@@ -928,13 +928,18 @@ void da7219_aad_suspend(struct snd_soc_component *component)
 {
 	struct da7219_priv *da7219 = snd_soc_component_get_drvdata(component);
 	struct da7219_aad_priv *da7219_aad = da7219->aad;
-	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(component);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	u8 micbias_ctrl;
+
+	disable_irq(da7219_aad->irq);
 
 	if (da7219_aad->jack) {
 		/* Disable jack detection during suspend */
 		snd_soc_component_update_bits(component, DA7219_ACCDET_CONFIG_1,
 				    DA7219_ACCDET_EN_MASK, 0);
+		cancel_delayed_work_sync(&da7219_aad->jack_det_work);
+		/* Disable ground switch */
+		snd_soc_component_update_bits(component, 0xFB, 0x01, 0x00);
 
 		/*
 		 * If we have a 4-pole jack inserted, then micbias will be
@@ -951,15 +956,13 @@ void da7219_aad_suspend(struct snd_soc_component *component)
 			}
 		}
 	}
-
-	synchronize_irq(da7219_aad->irq);
 }
 
 void da7219_aad_resume(struct snd_soc_component *component)
 {
 	struct da7219_priv *da7219 = snd_soc_component_get_drvdata(component);
 	struct da7219_aad_priv *da7219_aad = da7219->aad;
-	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(component);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 
 	if (da7219_aad->jack) {
 		/* Re-enable micbias if previously enabled for 4-pole jack */
@@ -975,6 +978,8 @@ void da7219_aad_resume(struct snd_soc_component *component)
 				    DA7219_ACCDET_EN_MASK,
 				    DA7219_ACCDET_EN_MASK);
 	}
+
+	enable_irq(da7219_aad->irq);
 }
 
 

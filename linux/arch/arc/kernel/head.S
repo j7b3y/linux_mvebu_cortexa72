@@ -88,16 +88,6 @@
 	DSP_EARLY_INIT
 .endm
 
-	; Here "patch-dtb" will embed external .dtb
-	; Note "patch-dtb" searches for ASCII "OWRTDTB:" string
-	; and pastes .dtb right after it, hense the string precedes
-	; __image_dtb symbol.
-	.section .owrt, "aw",@progbits
-	.ascii  "OWRTDTB:"
-ENTRY(__image_dtb)
-	.fill   0x4000
-END(__image_dtb)
-
 	.section .init.text, "ax",@progbits
 
 ;----------------------------------------------------------------
@@ -175,7 +165,7 @@ ENTRY(first_lines_of_secondary)
 	; setup stack (fp, sp)
 	mov	fp, 0
 
-	; set it's stack base to tsk->thread_info bottom
+	; set its stack base to tsk->thread_info bottom
 	GET_TSK_STACK_BASE r0, sp
 
 	j	start_kernel_secondary

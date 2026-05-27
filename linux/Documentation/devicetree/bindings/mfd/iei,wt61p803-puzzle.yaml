@@ -21,12 +21,10 @@ properties:
   compatible:
     const: iei,wt61p803-puzzle
 
-  current-speed:
-    description:
-      Serial bus speed in bps
-    maxItems: 1
+  current-speed: true
 
-  enable-beep: true
+  enable-beep:
+    type: boolean
 
   hwmon:
     $ref: /schemas/hwmon/iei,wt61p803-puzzle-hwmon.yaml

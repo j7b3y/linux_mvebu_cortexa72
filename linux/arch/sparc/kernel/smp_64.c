@@ -297,10 +297,7 @@ static void ldom_startcpu_cpuid(unsigned int cpu, unsigned long thread_reg,
 	unsigned long hv_err;
 	int i;
 
-	hdesc = kzalloc(sizeof(*hdesc) +
-			(sizeof(struct hvtramp_mapping) *
-			 num_kernel_image_mappings - 1),
-			GFP_KERNEL);
+	hdesc = kzalloc_flex(*hdesc, maps, num_kernel_image_mappings);
 	if (!hdesc) {
 		printk(KERN_ERR "ldom_startcpu_cpuid: Cannot allocate "
 		       "hvtramp_descr.\n");
@@ -1203,10 +1200,6 @@ void __irq_entry smp_penguin_jailcell(int irq, struct pt_regs *regs)
 }
 
 void __init smp_prepare_cpus(unsigned int max_cpus)
-{
-}
-
-void smp_prepare_boot_cpu(void)
 {
 }
 

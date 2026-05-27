@@ -26,7 +26,7 @@ static unsigned int bcma_bus_next_num;
 /* bcma_buses_mutex locks the bcma_bus_next_num */
 static DEFINE_MUTEX(bcma_buses_mutex);
 
-static int bcma_bus_match(struct device *dev, struct device_driver *drv);
+static int bcma_bus_match(struct device *dev, const struct device_driver *drv);
 static int bcma_device_probe(struct device *dev);
 static void bcma_device_remove(struct device *dev);
 static int bcma_device_uevent(const struct device *dev, struct kobj_uevent_env *env);
@@ -68,7 +68,7 @@ static struct attribute *bcma_device_attrs[] = {
 };
 ATTRIBUTE_GROUPS(bcma_device);
 
-static struct bus_type bcma_bus_type = {
+static const struct bus_type bcma_bus_type = {
 	.name		= "bcma",
 	.match		= bcma_bus_match,
 	.probe		= bcma_device_probe,
@@ -237,17 +237,13 @@ EXPORT_SYMBOL(bcma_core_irq);
 
 void bcma_prepare_core(struct bcma_bus *bus, struct bcma_device *core)
 {
-	struct device *dev = &core->dev;
-
-	device_initialize(dev);
+	device_initialize(&core->dev);
 	core->dev.release = bcma_release_core_dev;
 	core->dev.bus = &bcma_bus_type;
-	dev_set_name(dev, "bcma%d:%d", bus->num, core->core_index);
+	dev_set_name(&core->dev, "bcma%d:%d", bus->num, core->core_index);
 	core->dev.parent = bus->dev;
-	if (bus->dev) {
+	if (bus->dev)
 		bcma_of_fill_device(bus->dev, core);
-		dma_coerce_mask_and_coherent(dev, bus->dev->coherent_dma_mask);
-	}
 
 	switch (bus->hosttype) {
 	case BCMA_HOSTTYPE_PCI:
@@ -298,6 +294,8 @@ static int bcma_register_devices(struct bcma_bus *bus)
 	int err;
 
 	list_for_each_entry(core, &bus->cores, list) {
+		struct device_node *np;
+
 		/* We support that core ourselves */
 		switch (core->id.id) {
 		case BCMA_CORE_4706_CHIPCOMMON:
@@ -313,6 +311,10 @@ static int bcma_register_devices(struct bcma_bus *bus)
 
 		/* Early cores were already registered */
 		if (bcma_is_core_needed_early(core->id.id))
+			continue;
+
+		np = core->dev.of_node;
+		if (np && !of_device_is_available(np))
 			continue;
 
 		/* Only first GMAC core on BCM4706 is connected and working */
@@ -588,10 +590,10 @@ void bcma_driver_unregister(struct bcma_driver *drv)
 }
 EXPORT_SYMBOL_GPL(bcma_driver_unregister);
 
-static int bcma_bus_match(struct device *dev, struct device_driver *drv)
+static int bcma_bus_match(struct device *dev, const struct device_driver *drv)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
-	struct bcma_driver *adrv = container_of(drv, struct bcma_driver, drv);
+	const struct bcma_driver *adrv = container_of_const(drv, struct bcma_driver, drv);
 	const struct bcma_device_id *cid = &core->id;
 	const struct bcma_device_id *did;
 
@@ -670,14 +672,6 @@ fs_initcall(bcma_init_bus_register);
 static int __init bcma_modinit(void)
 {
 	int err;
-
-#ifdef CONFIG_BCMA_FALLBACK_SPROM
-	err = bcma_fbs_register();
-	if (err) {
-		pr_err("Fallback SPROM initialization failed\n");
-		err = 0;
-	}
-#endif /* CONFIG_BCMA_FALLBACK_SPROM */
 
 	err = bcma_init_bus_register();
 	if (err)

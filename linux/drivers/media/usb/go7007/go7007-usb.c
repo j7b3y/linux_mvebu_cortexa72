@@ -1115,7 +1115,7 @@ static int go7007_usb_probe(struct usb_interface *intf,
 	if (go == NULL)
 		return -ENOMEM;
 
-	usb = kzalloc(sizeof(struct go7007_usb), GFP_KERNEL);
+	usb = kzalloc_obj(struct go7007_usb);
 	if (usb == NULL) {
 		kfree(go);
 		return -ENOMEM;
@@ -1352,4 +1352,5 @@ static struct usb_driver go7007_usb_driver = {
 };
 
 module_usb_driver(go7007_usb_driver);
+MODULE_DESCRIPTION("WIS GO7007 USB support");
 MODULE_LICENSE("GPL v2");

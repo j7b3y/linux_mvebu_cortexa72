@@ -903,7 +903,7 @@ static int cdns3_prepare_aligned_request_buf(struct cdns3_request *priv_req)
 	buf = priv_req->aligned_buf;
 
 	if (!buf || priv_req->request.length > buf->size) {
-		buf = kzalloc(sizeof(*buf), GFP_ATOMIC);
+		buf = kzalloc_obj(*buf, GFP_ATOMIC);
 		if (!buf)
 			return -ENOMEM;
 
@@ -1132,6 +1132,7 @@ static int cdns3_ep_run_transfer(struct cdns3_endpoint *priv_ep,
 	u16 total_tdl = 0;
 	struct scatterlist *s = NULL;
 	bool sg_supported = !!(request->num_mapped_sgs);
+	u32 ioc = request->no_interrupt ? 0 : TRB_IOC;
 
 	num_trb_req = sg_supported ? request->num_mapped_sgs : 1;
 
@@ -1288,11 +1289,11 @@ static int cdns3_ep_run_transfer(struct cdns3_endpoint *priv_ep,
 			control |= pcs;
 
 		if (priv_ep->type == USB_ENDPOINT_XFER_ISOC  && !priv_ep->dir) {
-			control |= TRB_IOC | TRB_ISP;
+			control |= ioc | TRB_ISP;
 		} else {
 			/* for last element in TD or in SG list */
 			if (sg_iter == (num_trb - 1) && sg_iter != 0)
-				control |= pcs | TRB_IOC | TRB_ISP;
+				control |= pcs | ioc | TRB_ISP;
 		}
 
 		if (sg_iter)
@@ -1323,7 +1324,7 @@ static int cdns3_ep_run_transfer(struct cdns3_endpoint *priv_ep,
 	priv_req->num_of_trb = num_trb;
 
 	if (sg_iter == 1)
-		trb->control |= cpu_to_le32(TRB_IOC | TRB_ISP);
+		trb->control |= cpu_to_le32(ioc | TRB_ISP);
 
 	if (priv_dev->dev_ver < DEV_VER_V2 &&
 	    (priv_ep->flags & EP_TDLCHK_EN)) {
@@ -1962,6 +1963,7 @@ static irqreturn_t cdns3_device_thread_irq_handler(int irq, void *data)
 	unsigned int bit;
 	unsigned long reg;
 
+	local_bh_disable();
 	spin_lock_irqsave(&priv_dev->lock, flags);
 
 	reg = readl(&priv_dev->regs->usb_ists);
@@ -2003,6 +2005,7 @@ static irqreturn_t cdns3_device_thread_irq_handler(int irq, void *data)
 irqend:
 	writel(~0, &priv_dev->regs->ep_ien);
 	spin_unlock_irqrestore(&priv_dev->lock, flags);
+	local_bh_enable();
 
 	return ret;
 }
@@ -2312,7 +2315,7 @@ struct usb_request *cdns3_gadget_ep_alloc_request(struct usb_ep *ep,
 	struct cdns3_endpoint *priv_ep = ep_to_cdns3_ep(ep);
 	struct cdns3_request *priv_req;
 
-	priv_req = kzalloc(sizeof(*priv_req), gfp_flags);
+	priv_req = kzalloc_obj(*priv_req, gfp_flags);
 	if (!priv_req)
 		return NULL;
 
@@ -2585,6 +2588,9 @@ static int __cdns3_gadget_ep_queue(struct usb_ep *ep,
 	struct cdns3_device *priv_dev = priv_ep->cdns3_dev;
 	struct cdns3_request *priv_req;
 	int ret = 0;
+
+	if (!ep->desc)
+		return -ESHUTDOWN;
 
 	request->actual = 0;
 	request->status = -EINPROGRESS;
@@ -3248,7 +3254,6 @@ static void cdns3_gadget_exit(struct cdns *cdns)
 	priv_dev = cdns->gadget_dev;
 
 
-	pm_runtime_mark_last_busy(cdns->dev);
 	pm_runtime_put_autosuspend(cdns->dev);
 
 	usb_del_gadget(&priv_dev->gadget);
@@ -3285,7 +3290,7 @@ static int cdns3_gadget_start(struct cdns *cdns)
 	u32 max_speed;
 	int ret;
 
-	priv_dev = kzalloc(sizeof(*priv_dev), GFP_KERNEL);
+	priv_dev = kzalloc_obj(*priv_dev);
 	if (!priv_dev)
 		return -ENOMEM;
 
@@ -3426,6 +3431,7 @@ static int __cdns3_gadget_init(struct cdns *cdns)
 	ret = cdns3_gadget_start(cdns);
 	if (ret) {
 		pm_runtime_put_sync(cdns->dev);
+		cdns_drd_gadget_off(cdns);
 		return ret;
 	}
 
@@ -3467,7 +3473,7 @@ __must_hold(&cdns->lock)
 	return 0;
 }
 
-static int cdns3_gadget_resume(struct cdns *cdns, bool hibernated)
+static int cdns3_gadget_resume(struct cdns *cdns, bool lost_power)
 {
 	struct cdns3_device *priv_dev = cdns->gadget_dev;
 
@@ -3475,7 +3481,7 @@ static int cdns3_gadget_resume(struct cdns *cdns, bool hibernated)
 		return 0;
 
 	cdns3_gadget_config(priv_dev);
-	if (hibernated)
+	if (lost_power)
 		writel(USB_CONF_DEVEN, &priv_dev->regs->usb_conf);
 
 	return 0;

@@ -32,15 +32,13 @@
 #define UEVENT_NUM_ENVP			64	/* number of env pointers */
 #define UEVENT_BUFFER_SIZE		2048	/* buffer for the variables */
 
-struct sk_buff;
-
 #ifdef CONFIG_UEVENT_HELPER
 /* path to the userspace helper executed on an event */
 extern char uevent_helper[];
 #endif
 
 /* counter to tag the uevent, read only except for the kobject core */
-extern u64 uevent_seqnum;
+extern atomic64_t uevent_seqnum;
 
 /*
  * The actions here must match the index to the string array
@@ -111,7 +109,7 @@ struct kobject *kobject_get(struct kobject *kobj);
 struct kobject * __must_check kobject_get_unless_zero(struct kobject *kobj);
 void kobject_put(struct kobject *kobj);
 
-const void *kobject_namespace(const struct kobject *kobj);
+const struct ns_common *kobject_namespace(const struct kobject *kobj);
 void kobject_get_ownership(const struct kobject *kobj, kuid_t *uid, kgid_t *gid);
 char *kobject_get_path(const struct kobject *kobj, gfp_t flag);
 
@@ -120,7 +118,7 @@ struct kobj_type {
 	const struct sysfs_ops *sysfs_ops;
 	const struct attribute_group **default_groups;
 	const struct kobj_ns_type_operations *(*child_ns_type)(const struct kobject *kobj);
-	const void *(*namespace)(const struct kobject *kobj);
+	const struct ns_common *(*namespace)(const struct kobject *kobj);
 	void (*get_ownership)(const struct kobject *kobj, kuid_t *uid, kgid_t *gid);
 };
 
@@ -220,8 +218,5 @@ int kobject_synth_uevent(struct kobject *kobj, const char *buf, size_t count);
 
 __printf(2, 3)
 int add_uevent_var(struct kobj_uevent_env *env, const char *format, ...);
-
-int broadcast_uevent(struct sk_buff *skb, __u32 pid, __u32 group,
-		     gfp_t allocation);
 
 #endif /* _KOBJECT_H_ */

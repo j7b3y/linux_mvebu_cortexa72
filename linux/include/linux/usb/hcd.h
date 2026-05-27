@@ -55,7 +55,7 @@ struct giveback_urb_bh {
 	bool high_prio;
 	spinlock_t lock;
 	struct list_head  head;
-	struct tasklet_struct bh;
+	struct work_struct bh;
 	struct usb_host_endpoint *completing_ep;
 };
 
@@ -485,15 +485,25 @@ extern int usb_hcd_pci_probe(struct pci_dev *dev,
 extern void usb_hcd_pci_remove(struct pci_dev *dev);
 extern void usb_hcd_pci_shutdown(struct pci_dev *dev);
 
-#ifndef CONFIG_PCI_DISABLE_COMMON_QUIRKS
+#ifdef CONFIG_USB_PCI_AMD
 extern int usb_hcd_amd_remote_wakeup_quirk(struct pci_dev *dev);
-#else
-static inline int usb_hcd_amd_remote_wakeup_quirk(struct pci_dev *dev)
+
+static inline bool usb_hcd_amd_resume_bug(struct pci_dev *dev,
+					  const struct hc_driver *driver)
 {
-	return 0;
+	if (!usb_hcd_amd_remote_wakeup_quirk(dev))
+		return false;
+	if (driver->flags & (HCD_USB11 | HCD_USB3))
+		return true;
+	return false;
+}
+#else /* CONFIG_USB_PCI_AMD */
+static inline bool usb_hcd_amd_resume_bug(struct pci_dev *dev,
+					  const struct hc_driver *driver)
+{
+	return false;
 }
 #endif
-
 extern const struct dev_pm_ops usb_hcd_pci_pm_ops;
 #endif /* CONFIG_USB_PCI */
 
@@ -749,12 +759,6 @@ static inline void usbmon_urb_complete(struct usb_bus *bus, struct urb *urb,
  * Nobody else should touch it.
  */
 extern struct rw_semaphore ehci_cf_port_reset_rwsem;
-
-/* Keep track of which host controller drivers are loaded */
-#define USB_UHCI_LOADED		0
-#define USB_OHCI_LOADED		1
-#define USB_EHCI_LOADED		2
-extern unsigned long usb_hcds_loaded;
 
 #endif /* __KERNEL__ */
 

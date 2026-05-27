@@ -246,9 +246,9 @@ unlock:
 	blktrans_dev_put(dev);
 }
 
-static int blktrans_getgeo(struct block_device *bdev, struct hd_geometry *geo)
+static int blktrans_getgeo(struct gendisk *disk, struct hd_geometry *geo)
 {
-	struct mtd_blktrans_dev *dev = bdev->bd_disk->private_data;
+	struct mtd_blktrans_dev *dev = disk->private_data;
 	int ret = -ENXIO;
 
 	mutex_lock(&dev->lock);
@@ -277,6 +277,7 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 {
 	struct mtd_blktrans_ops *tr = new->tr;
 	struct mtd_blktrans_dev *d;
+	struct queue_limits lim = { };
 	int last_devnum = -1;
 	struct gendisk *gd;
 	int ret;
@@ -323,17 +324,23 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 		new->readonly = 1;
 
 	ret = -ENOMEM;
-	new->tag_set = kzalloc(sizeof(*new->tag_set), GFP_KERNEL);
+	new->tag_set = kzalloc_obj(*new->tag_set);
 	if (!new->tag_set)
 		goto out_list_del;
 
 	ret = blk_mq_alloc_sq_tag_set(new->tag_set, &mtd_mq_ops, 2,
-			BLK_MQ_F_SHOULD_MERGE | BLK_MQ_F_BLOCKING);
+			BLK_MQ_F_BLOCKING);
 	if (ret)
 		goto out_kfree_tag_set;
+	
+	lim.logical_block_size = tr->blksize;
+	if (tr->discard)
+		lim.max_hw_discard_sectors = UINT_MAX;
+	if (tr->flush)
+		lim.features |= BLK_FEAT_WRITE_CACHE;
 
 	/* Create gendisk */
-	gd = blk_mq_alloc_disk(new->tag_set, new);
+	gd = blk_mq_alloc_disk(new->tag_set, &lim, new);
 	if (IS_ERR(gd)) {
 		ret = PTR_ERR(gd);
 		goto out_free_tag_set;
@@ -367,27 +374,24 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	/* Create the request queue */
 	spin_lock_init(&new->queue_lock);
 	INIT_LIST_HEAD(&new->rq_list);
-
-	if (tr->flush)
-		blk_queue_write_cache(new->rq, true, false);
-
-	blk_queue_logical_block_size(new->rq, tr->blksize);
-
-	blk_queue_flag_set(QUEUE_FLAG_NONROT, new->rq);
-	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, new->rq);
-
-	if (tr->discard) {
-		blk_queue_max_discard_sectors(new->rq, UINT_MAX);
-		new->rq->limits.discard_granularity = tr->blksize;
-	}
-
 	gd->queue = new->rq;
 
 	if (new->readonly)
 		set_disk_ro(gd, 1);
 
+	ret = device_add_disk(&new->mtd->dev, gd, NULL);
+	if (ret)
+		goto out_cleanup_disk;
+
+	if (new->disk_attributes) {
+		ret = sysfs_create_group(&disk_to_dev(gd)->kobj,
+					new->disk_attributes);
+		WARN_ON(ret);
+	}
 	return 0;
 
+out_cleanup_disk:
+	put_disk(new->disk);
 out_free_tag_set:
 	blk_mq_free_tag_set(new->tag_set);
 out_kfree_tag_set:
@@ -397,38 +401,10 @@ out_list_del:
 	return ret;
 }
 
-void register_mtd_blktrans_devs(void)
-{
-	struct mtd_blktrans_ops *tr;
-	struct mtd_blktrans_dev *dev, *next;
-	int ret;
-
-	list_for_each_entry(tr, &blktrans_majors, list) {
-		list_for_each_entry_safe(dev, next, &tr->devs, list) {
-			if (disk_live(dev->disk))
-				continue;
-
-			ret = device_add_disk(&dev->mtd->dev, dev->disk, NULL);
-			if (ret)
-				goto out_cleanup_disk;
-
-			if (dev->disk_attributes) {
-				ret = sysfs_create_group(&disk_to_dev(dev->disk)->kobj,
-							dev->disk_attributes);
-				WARN_ON(ret);
-			}
-		}
-	}
-
-	return;
-
-out_cleanup_disk:
-	put_disk(dev->disk);
-}
-
 int del_mtd_blktrans_dev(struct mtd_blktrans_dev *old)
 {
 	unsigned long flags;
+	unsigned int memflags;
 
 	lockdep_assert_held(&mtd_table_mutex);
 
@@ -445,10 +421,10 @@ int del_mtd_blktrans_dev(struct mtd_blktrans_dev *old)
 	spin_unlock_irqrestore(&old->queue_lock, flags);
 
 	/* freeze+quiesce queue to ensure all requests are flushed */
-	blk_mq_freeze_queue(old->rq);
+	memflags = blk_mq_freeze_queue(old->rq);
 	blk_mq_quiesce_queue(old->rq);
 	blk_mq_unquiesce_queue(old->rq);
-	blk_mq_unfreeze_queue(old->rq);
+	blk_mq_unfreeze_queue(old->rq, memflags);
 
 	/* If the device is currently open, tell trans driver to close it,
 		then put mtd device, and don't touch it again */

@@ -12,7 +12,6 @@
 #include <linux/bcma/bcma.h>
 #include <linux/etherdevice.h>
 #include <linux/interrupt.h>
-#include <linux/platform_data/b53.h>
 #include <linux/bcm47xx_nvram.h>
 #include <linux/phy.h>
 #include <linux/phy_fixed.h>
@@ -1368,8 +1367,7 @@ static void bgmac_get_strings(struct net_device *dev, u32 stringset,
 		return;
 
 	for (i = 0; i < BGMAC_STATS_LEN; i++)
-		strscpy(data + i * ETH_GSTRING_LEN,
-			bgmac_get_strings_stats[i].name, ETH_GSTRING_LEN);
+		ethtool_puts(&data, bgmac_get_strings_stats[i].name);
 }
 
 static void bgmac_get_ethtool_stats(struct net_device *dev,
@@ -1407,17 +1405,6 @@ static const struct ethtool_ops bgmac_ethtool_ops = {
 	.get_drvinfo		= bgmac_get_drvinfo,
 	.get_link_ksettings     = phy_ethtool_get_link_ksettings,
 	.set_link_ksettings     = phy_ethtool_set_link_ksettings,
-};
-
-static struct b53_platform_data bgmac_b53_pdata = {
-};
-
-static struct platform_device bgmac_b53_dev = {
-	.name		= "b53-srab-switch",
-	.id		= -1,
-	.dev		= {
-		.platform_data = &bgmac_b53_pdata,
-	},
 };
 
 /**************************************************
@@ -1459,7 +1446,7 @@ int bgmac_phy_connect_direct(struct bgmac *bgmac)
 	struct phy_device *phy_dev;
 	int err;
 
-	phy_dev = fixed_phy_register(PHY_POLL, &fphy_status, NULL);
+	phy_dev = fixed_phy_register(&fphy_status, NULL);
 	if (IS_ERR(phy_dev)) {
 		dev_err(bgmac->dev, "Failed to register fixed PHY device\n");
 		return PTR_ERR(phy_dev);
@@ -1558,14 +1545,6 @@ int bgmac_enet_probe(struct bgmac *bgmac)
 
 	bgmac->in_init = false;
 
-	if ((bgmac->feature_flags & BGMAC_FEAT_SRAB) && !bgmac_b53_pdata.regs) {
-		bgmac_b53_pdata.regs = ioremap(0x18007000, 0x1000);
-
-		err = platform_device_register(&bgmac_b53_dev);
-		if (!err)
-			bgmac->b53_device = &bgmac_b53_dev;
-	}
-
 	err = register_netdev(bgmac->net_dev);
 	if (err) {
 		dev_err(bgmac->dev, "Cannot register net device\n");
@@ -1588,10 +1567,6 @@ EXPORT_SYMBOL_GPL(bgmac_enet_probe);
 
 void bgmac_enet_remove(struct bgmac *bgmac)
 {
-	if (bgmac->b53_device)
-		platform_device_unregister(&bgmac_b53_dev);
-	bgmac->b53_device = NULL;
-
 	unregister_netdev(bgmac->net_dev);
 	phy_disconnect(bgmac->net_dev->phydev);
 	netif_napi_del(&bgmac->napi);
@@ -1650,4 +1625,5 @@ int bgmac_enet_resume(struct bgmac *bgmac)
 EXPORT_SYMBOL_GPL(bgmac_enet_resume);
 
 MODULE_AUTHOR("Rafał Miłecki");
+MODULE_DESCRIPTION("Broadcom iProc GBit driver");
 MODULE_LICENSE("GPL");

@@ -18,6 +18,7 @@
 #define __TOOLS_LINUX_PERF_RBTREE_H
 
 #include <linux/kernel.h>
+#include <linux/stddef.h>
 
 struct rb_node {
 	unsigned long  __rb_parent_color;

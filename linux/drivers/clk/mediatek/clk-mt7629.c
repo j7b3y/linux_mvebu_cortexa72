@@ -634,7 +634,7 @@ static int mtk_apmixedsys_init(struct platform_device *pdev)
 	if (!clk_data)
 		return -ENOMEM;
 
-	mtk_clk_register_plls(node, plls, ARRAY_SIZE(plls),
+	mtk_clk_register_plls(&pdev->dev, plls, ARRAY_SIZE(plls),
 			      clk_data);
 
 	mtk_clk_register_gates(&pdev->dev, node, apmixed_clks,
@@ -698,4 +698,6 @@ static int clk_mt7629_init(void)
 }
 
 arch_initcall(clk_mt7629_init);
+
+MODULE_DESCRIPTION("MediaTek MT7629 main clocks driver");
 MODULE_LICENSE("GPL");

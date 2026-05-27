@@ -10,12 +10,8 @@
 #define __SANE_USERSPACE_TYPES__	/* For PPC64, to get LL64 types */
 #endif
 
-#ifndef __linux__
-#include <tools/linux_types.h>
-#else
 #include <asm/types.h>
 #include <asm/posix_types.h>
-#endif
 
 struct page;
 struct kmem_cache;
@@ -46,6 +42,8 @@ typedef __s16 s16;
 typedef __u8  u8;
 typedef __s8  s8;
 
+typedef unsigned long long	ullong;
+
 #ifdef __CHECKER__
 #define __bitwise	__attribute__((bitwise))
 #else
@@ -60,7 +58,6 @@ typedef __s8  s8;
 #define __user
 #endif
 #define __must_check
-#undef __cold
 #define __cold
 
 typedef __u16 __bitwise __le16;
@@ -89,6 +86,14 @@ typedef struct {
 
 #ifndef __aligned_u64
 # define __aligned_u64 __u64 __attribute__((aligned(8)))
+#endif
+
+#ifndef __aligned_be64
+# define __aligned_be64 __be64 __attribute__((aligned(8)))
+#endif
+
+#ifndef __aligned_le64
+# define __aligned_le64 __le64 __attribute__((aligned(8)))
 #endif
 
 struct list_head {

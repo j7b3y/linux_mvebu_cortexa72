@@ -74,7 +74,7 @@ SECTIONS
 	. = ALIGN(4);
 	__ex_table : AT(ADDR(__ex_table) - LOAD_OFFSET) {
 		__start___ex_table = .;
-		KEEP(*(__ex_table))
+		ARM_MMU_KEEP(*(__ex_table))
 		__stop___ex_table = .;
 	}
 
@@ -104,13 +104,13 @@ SECTIONS
 	}
 	.init.tagtable : {
 		__tagtable_begin = .;
-		KEEP(*(.taglist.init))
+		*(.taglist.init)
 		__tagtable_end = .;
 	}
 #ifdef CONFIG_SMP_ON_UP
 	.init.smpalt : {
 		__smpalt_begin = .;
-		KEEP(*(.alt.smp.init))
+		*(.alt.smp.init)
 		__smpalt_end = .;
 	}
 #endif
@@ -153,6 +153,7 @@ SECTIONS
 
 	STABS_DEBUG
 	DWARF_DEBUG
+	MODINFO
 	ARM_DETAILS
 
 	ARM_ASSERTS

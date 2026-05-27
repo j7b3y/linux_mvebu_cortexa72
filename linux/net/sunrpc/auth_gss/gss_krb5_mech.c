@@ -473,7 +473,7 @@ gss_krb5_import_sec_context(const void *p, size_t len, struct gss_ctx *ctx_id,
 	struct  krb5_ctx *ctx;
 	int ret;
 
-	ctx = kzalloc(sizeof(*ctx), gfp_mask);
+	ctx = kzalloc_obj(*ctx, gfp_mask);
 	if (ctx == NULL)
 		return -ENOMEM;
 
@@ -659,6 +659,7 @@ static void __exit cleanup_kerberos_module(void)
 	gss_mech_unregister(&gss_kerberos_mech);
 }
 
+MODULE_DESCRIPTION("Sun RPC Kerberos 5 module");
 MODULE_LICENSE("GPL");
 module_init(init_kerberos_module);
 module_exit(cleanup_kerberos_module);

@@ -7,7 +7,6 @@
 
 /dts-v1/;
 #include "armada-388-clearfog.dtsi"
-#include "armada-38x-solidrun-microsom-emmc.dtsi"
 
 / {
 	model = "SolidRun Clearfog Base A1";
@@ -35,7 +34,7 @@
 };
 
 &gpio0 {
-	phy1_reset {
+	phy1-reset-hog {
 		gpio-hog;
 		gpios = <19 GPIO_ACTIVE_LOW>;
 		output-low;

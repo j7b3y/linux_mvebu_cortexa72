@@ -29,13 +29,9 @@ struct gb_channel {
 	struct attribute_group		*attr_group;
 	const struct attribute_group	**attr_groups;
 	struct led_classdev		*led;
-#if IS_REACHABLE(CONFIG_LEDS_CLASS_FLASH)
 	struct led_classdev_flash	fled;
 	struct led_flash_setting	intensity_uA;
 	struct led_flash_setting	timeout_us;
-#else
-	struct led_classdev		cled;
-#endif
 	struct gb_light			*light;
 	bool				is_registered;
 	bool				releasing;
@@ -84,7 +80,6 @@ static bool is_channel_flash(struct gb_channel *channel)
 				   | GB_CHANNEL_MODE_INDICATOR));
 }
 
-#if IS_REACHABLE(CONFIG_LEDS_CLASS_FLASH)
 static struct gb_channel *get_channel_from_cdev(struct led_classdev *cdev)
 {
 	struct led_classdev_flash *fled_cdev = lcdev_to_flcdev(cdev);
@@ -156,22 +151,6 @@ static int __gb_lights_flash_brightness_set(struct gb_channel *channel)
 
 	return __gb_lights_flash_intensity_set(channel, intensity);
 }
-#else
-static struct gb_channel *get_channel_from_cdev(struct led_classdev *cdev)
-{
-	return container_of(cdev, struct gb_channel, cled);
-}
-
-static struct led_classdev *get_channel_cdev(struct gb_channel *channel)
-{
-	return &channel->cled;
-}
-
-static int __gb_lights_flash_brightness_set(struct gb_channel *channel)
-{
-	return 0;
-}
-#endif
 
 static int gb_lights_color_set(struct gb_channel *channel, u32 color);
 static int gb_lights_fade_set(struct gb_channel *channel);
@@ -290,14 +269,13 @@ static int channel_attr_groups_set(struct gb_channel *channel,
 		return 0;
 
 	/* Set attributes based in the channel flags */
-	channel->attrs = kcalloc(size + 1, sizeof(*channel->attrs), GFP_KERNEL);
+	channel->attrs = kzalloc_objs(*channel->attrs, size + 1);
 	if (!channel->attrs)
 		return -ENOMEM;
-	channel->attr_group = kzalloc(sizeof(*channel->attr_group), GFP_KERNEL);
+	channel->attr_group = kzalloc_obj(*channel->attr_group);
 	if (!channel->attr_group)
 		return -ENOMEM;
-	channel->attr_groups = kcalloc(2, sizeof(*channel->attr_groups),
-				       GFP_KERNEL);
+	channel->attr_groups = kzalloc_objs(*channel->attr_groups, 2);
 	if (!channel->attr_groups)
 		return -ENOMEM;
 
@@ -1029,14 +1007,17 @@ static int gb_lights_light_config(struct gb_lights *glights, u8 id)
 	if (!strlen(conf.name))
 		return -EINVAL;
 
-	light->channels_count = conf.channel_count;
 	light->name = kstrndup(conf.name, NAMES_MAX, GFP_KERNEL);
 	if (!light->name)
 		return -ENOMEM;
-	light->channels = kcalloc(light->channels_count,
-				  sizeof(struct gb_channel), GFP_KERNEL);
+	light->channels = kzalloc_objs(struct gb_channel, conf.channel_count);
 	if (!light->channels)
 		return -ENOMEM;
+	/*
+	 * Publish channels_count only after channels allocation so cleanup
+	 * doesn't walk a NULL channels pointer on allocation failure.
+	 */
+	light->channels_count = conf.channel_count;
 
 	/* First we collect all the configurations for all channels */
 	for (i = 0; i < light->channels_count; i++) {
@@ -1170,8 +1151,7 @@ static int gb_lights_create_all(struct gb_lights *glights)
 	if (ret < 0)
 		goto out;
 
-	glights->lights = kcalloc(glights->lights_count,
-				  sizeof(struct gb_light), GFP_KERNEL);
+	glights->lights = kzalloc_objs(struct gb_light, glights->lights_count);
 	if (!glights->lights) {
 		ret = -ENOMEM;
 		goto out;
@@ -1279,7 +1259,7 @@ static int gb_lights_probe(struct gb_bundle *bundle,
 	if (cport_desc->protocol_id != GREYBUS_PROTOCOL_LIGHTS)
 		return -ENODEV;
 
-	glights = kzalloc(sizeof(*glights), GFP_KERNEL);
+	glights = kzalloc_obj(*glights);
 	if (!glights)
 		return -ENOMEM;
 
@@ -1360,4 +1340,5 @@ static struct greybus_driver gb_lights_driver = {
 };
 module_greybus_driver(gb_lights_driver);
 
+MODULE_DESCRIPTION("Greybus Lights protocol driver");
 MODULE_LICENSE("GPL v2");

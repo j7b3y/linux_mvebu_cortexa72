@@ -272,7 +272,7 @@ static void free_suite_set_at_end(struct kunit *test, const void *to_free)
 	if (!((struct kunit_suite_set *)to_free)->start)
 		return;
 
-	free = kzalloc(sizeof(struct kunit_suite_set), GFP_KERNEL);
+	free = kzalloc_obj(struct kunit_suite_set);
 	*free = *(struct kunit_suite_set *)to_free;
 
 	kunit_add_action(test, free_suite_set, (void *)free);
@@ -286,7 +286,7 @@ static struct kunit_suite *alloc_fake_suite(struct kunit *test,
 
 	/* We normally never expect to allocate suites, hence the non-const cast. */
 	suite = kunit_kzalloc(test, sizeof(*suite), GFP_KERNEL);
-	strncpy((char *)suite->name, suite_name, sizeof(suite->name) - 1);
+	strscpy((char *)suite->name, suite_name, sizeof(suite->name));
 	suite->test_cases = test_cases;
 
 	return suite;

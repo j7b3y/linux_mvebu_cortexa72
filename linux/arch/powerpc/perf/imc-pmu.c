@@ -136,7 +136,7 @@ static struct attribute *device_str_attr_create(const char *name, const char *st
 {
 	struct perf_pmu_events_attr *attr;
 
-	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+	attr = kzalloc_obj(*attr);
 	if (!attr)
 		return NULL;
 	sysfs_attr_init(&attr->attr.attr);
@@ -257,7 +257,7 @@ static int update_events_in_group(struct device_node *node, struct imc_pmu *pmu)
 	of_property_read_u32(node, "reg", &base_reg);
 
 	/* Allocate memory for the events */
-	pmu->events = kcalloc(ct, sizeof(struct imc_events), GFP_KERNEL);
+	pmu->events = kzalloc_objs(struct imc_events, ct);
 	if (!pmu->events) {
 		of_node_put(pmu_events);
 		return -ENOMEM;
@@ -274,7 +274,7 @@ static int update_events_in_group(struct device_node *node, struct imc_pmu *pmu)
 	of_node_put(pmu_events);
 
 	/* Allocate memory for attribute group */
-	attr_group = kzalloc(sizeof(*attr_group), GFP_KERNEL);
+	attr_group = kzalloc_obj(*attr_group);
 	if (!attr_group) {
 		imc_free_events(pmu->events, ct);
 		return -ENOMEM;
@@ -288,7 +288,7 @@ static int update_events_in_group(struct device_node *node, struct imc_pmu *pmu)
 	 * So allocate three times the "ct" (this includes event, event_scale and
 	 * event_unit).
 	 */
-	attrs = kcalloc(((ct * 3) + 1), sizeof(struct attribute *), GFP_KERNEL);
+	attrs = kzalloc_objs(struct attribute *, ((ct * 3) + 1));
 	if (!attrs) {
 		kfree(attr_group);
 		imc_free_events(pmu->events, ct);
@@ -550,7 +550,7 @@ static int nest_imc_event_init(struct perf_event *event)
 			break;
 		}
 		pcni++;
-	} while (pcni->vbase != 0);
+	} while (pcni->vbase);
 
 	if (!flag)
 		return -ENODEV;
@@ -1031,16 +1031,16 @@ static bool is_thread_imc_pmu(struct perf_event *event)
 	return false;
 }
 
-static u64 * get_event_base_addr(struct perf_event *event)
+static __be64 *get_event_base_addr(struct perf_event *event)
 {
 	u64 addr;
 
 	if (is_thread_imc_pmu(event)) {
 		addr = (u64)per_cpu(thread_imc_mem, smp_processor_id());
-		return (u64 *)(addr + (event->attr.config & IMC_EVENT_OFFSET_MASK));
+		return (__be64 *)(addr + (event->attr.config & IMC_EVENT_OFFSET_MASK));
 	}
 
-	return (u64 *)event->hw.event_base;
+	return (__be64 *)event->hw.event_base;
 }
 
 static void thread_imc_pmu_start_txn(struct pmu *pmu,
@@ -1064,7 +1064,8 @@ static int thread_imc_pmu_commit_txn(struct pmu *pmu)
 
 static u64 imc_read_counter(struct perf_event *event)
 {
-	u64 *addr, data;
+	__be64 *addr;
+	u64 data;
 
 	/*
 	 * In-Memory Collection (IMC) counters are free flowing counters.
@@ -1526,8 +1527,7 @@ static int init_nest_pmu_ref(void)
 {
 	int nid, i, cpu;
 
-	nest_imc_refc = kcalloc(num_possible_nodes(), sizeof(*nest_imc_refc),
-								GFP_KERNEL);
+	nest_imc_refc = kzalloc_objs(*nest_imc_refc, num_possible_nodes());
 
 	if (!nest_imc_refc)
 		return -ENOMEM;
@@ -1698,9 +1698,8 @@ static int imc_mem_init(struct imc_pmu *pmu_ptr, struct device_node *parent,
 
 		/* Needed for hotplug/migration */
 		if (!per_nest_pmu_arr) {
-			per_nest_pmu_arr = kcalloc(get_max_nest_dev() + 1,
-						sizeof(struct imc_pmu *),
-						GFP_KERNEL);
+			per_nest_pmu_arr = kzalloc_objs(struct imc_pmu *,
+							get_max_nest_dev() + 1);
 			if (!per_nest_pmu_arr)
 				goto err;
 		}
@@ -1713,14 +1712,12 @@ static int imc_mem_init(struct imc_pmu *pmu_ptr, struct device_node *parent,
 			goto err;
 
 		nr_cores = DIV_ROUND_UP(num_possible_cpus(), threads_per_core);
-		pmu_ptr->mem_info = kcalloc(nr_cores, sizeof(struct imc_mem_info),
-								GFP_KERNEL);
+		pmu_ptr->mem_info = kzalloc_objs(struct imc_mem_info, nr_cores);
 
 		if (!pmu_ptr->mem_info)
 			goto err;
 
-		core_imc_refc = kcalloc(nr_cores, sizeof(struct imc_pmu_ref),
-								GFP_KERNEL);
+		core_imc_refc = kzalloc_objs(struct imc_pmu_ref, nr_cores);
 
 		if (!core_imc_refc) {
 			kfree(pmu_ptr->mem_info);
@@ -1753,8 +1750,7 @@ static int imc_mem_init(struct imc_pmu *pmu_ptr, struct device_node *parent,
 			return -ENOMEM;
 
 		nr_cores = DIV_ROUND_UP(num_possible_cpus(), threads_per_core);
-		trace_imc_refc = kcalloc(nr_cores, sizeof(struct imc_pmu_ref),
-								GFP_KERNEL);
+		trace_imc_refc = kzalloc_objs(struct imc_pmu_ref, nr_cores);
 		if (!trace_imc_refc)
 			return -ENOMEM;
 

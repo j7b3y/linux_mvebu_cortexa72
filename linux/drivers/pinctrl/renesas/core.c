@@ -638,6 +638,12 @@ static const struct of_device_id sh_pfc_of_table[] = {
 		.data = &r8a779g0_pinmux_info,
 	},
 #endif
+#ifdef CONFIG_PINCTRL_PFC_R8A779H0
+	{
+		.compatible = "renesas,pfc-r8a779h0",
+		.data = &r8a779h0_pinmux_info,
+	},
+#endif
 #ifdef CONFIG_PINCTRL_PFC_SH73A0
 	{
 		.compatible = "renesas,pfc-sh73a0",
@@ -1267,8 +1273,7 @@ static void __init sh_pfc_check_driver(const struct platform_driver *pdrv)
 	    !of_find_matching_node(NULL, pdrv->driver.of_match_table))
 		return;
 
-	sh_pfc_regs = kcalloc(SH_PFC_MAX_REGS, sizeof(*sh_pfc_regs),
-			      GFP_KERNEL);
+	sh_pfc_regs = kzalloc_objs(*sh_pfc_regs, SH_PFC_MAX_REGS);
 	if (!sh_pfc_regs)
 		return;
 

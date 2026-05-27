@@ -1,4 +1,4 @@
-name: Tests
+name: Build Kernel
 
 on:
   push:
@@ -6,12 +6,12 @@ on:
       - 'linux/**'
 
 jobs:
-  test-ubuntu:
-    name: Test on Ubuntu
+  build:
+    name: Build on Ubuntu
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: true
 
@@ -22,7 +22,12 @@ jobs:
           build-essential \
           crossbuild-essential-arm64 \
           debhelper \
-          bc
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          pahole
 
     - name: Building Kernel
       run: |
@@ -31,7 +36,8 @@ jobs:
         cd linux
         date "+%Y%m%d%H%M%S" > .version
         make mvebu_defconfig
-        make --jobs=`nproc` bindeb-pkg
+        make olddefconfig
+        make --jobs=$(nproc) bindeb-pkg
         cd ..
         mkdir output
         mv *.deb ./output/

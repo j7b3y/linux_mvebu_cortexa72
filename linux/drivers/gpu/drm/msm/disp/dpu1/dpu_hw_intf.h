@@ -12,6 +12,7 @@
 #include "dpu_hw_util.h"
 
 struct dpu_hw_intf;
+struct dpu_vsync_source_cfg;
 
 /* intf timing settings */
 struct dpu_hw_intf_timing_params {
@@ -51,16 +52,17 @@ struct dpu_hw_intf_status {
 
 struct dpu_hw_intf_cmd_mode_cfg {
 	u8 data_compress;	/* enable data compress between dpu and dsi */
+	u8 wide_bus_en;		/* enable databus widen mode */
 };
 
 /**
  * struct dpu_hw_intf_ops : Interface to the interface Hw driver functions
  *  Assumption is these functions will be called after clocks are enabled
- * @ setup_timing_gen : programs the timing engine
- * @ setup_prog_fetch : enables/disables the programmable fetch logic
- * @ enable_timing: enable/disable timing engine
- * @ get_status: returns if timing engine is enabled or not
- * @ get_line_count: reads current vertical line counter
+ * @setup_timing_gen : programs the timing engine
+ * @setup_prg_fetch  : enables/disables the programmable fetch logic
+ * @enable_timing: enable/disable timing engine
+ * @get_status: returns if timing engine is enabled or not
+ * @get_line_count: reads current vertical line counter
  * @bind_pingpong_blk: enable/disable the connection with pingpong which will
  *                     feed pixels to this interface
  * @setup_misr: enable/disable MISR
@@ -69,18 +71,15 @@ struct dpu_hw_intf_cmd_mode_cfg {
  *                              pointer and programs the tear check configuration
  * @disable_tearcheck:          Disables tearcheck block
  * @connect_external_te:        Read, modify, write to either set or clear listening to external TE
- *                              Return: 1 if TE was originally connected, 0 if not, or -ERROR
- * @get_vsync_info:             Provides the programmed and current line_count
- * @setup_autorefresh:          Configure and enable the autorefresh config
- * @get_autorefresh:            Retrieve autorefresh config from hardware
- *                              Return: 0 on success, -ETIMEDOUT on timeout
+ *                              Returns 1 if TE was originally connected, 0 if not, or -ERROR
  * @vsync_sel:                  Select vsync signal for tear-effect configuration
+ * @disable_autorefresh:        Disable autorefresh if enabled
  * @program_intf_cmd_cfg:       Program the DPU to interface datapath for command mode
  */
 struct dpu_hw_intf_ops {
 	void (*setup_timing_gen)(struct dpu_hw_intf *intf,
 			const struct dpu_hw_intf_timing_params *p,
-			const struct dpu_format *fmt);
+			const struct msm_format *fmt);
 
 	void (*setup_prg_fetch)(struct dpu_hw_intf *intf,
 			const struct dpu_hw_intf_prog_fetch *fetch);
@@ -106,11 +105,8 @@ struct dpu_hw_intf_ops {
 
 	int (*connect_external_te)(struct dpu_hw_intf *intf, bool enable_external_te);
 
-	void (*vsync_sel)(struct dpu_hw_intf *intf, u32 vsync_source);
+	void (*vsync_sel)(struct dpu_hw_intf *intf, struct dpu_vsync_source_cfg *cfg);
 
-	/**
-	 * Disable autorefresh if enabled
-	 */
 	void (*disable_autorefresh)(struct dpu_hw_intf *intf, uint32_t encoder_id, u16 vdisplay);
 
 	void (*program_intf_cmd_cfg)(struct dpu_hw_intf *intf,
@@ -124,24 +120,15 @@ struct dpu_hw_intf {
 	enum dpu_intf idx;
 	const struct dpu_intf_cfg *cap;
 
+	const struct dpu_mdss_version *mdss_ver;
+
 	/* ops */
 	struct dpu_hw_intf_ops ops;
 };
 
-/**
- * dpu_hw_intf_init() - Initializes the INTF driver for the passed
- * interface catalog entry.
- * @cfg:  interface catalog entry for which driver object is required
- * @addr: mapped register io address of MDP
- * @mdss_rev: dpu core's major and minor versions
- */
-struct dpu_hw_intf *dpu_hw_intf_init(const struct dpu_intf_cfg *cfg,
-		void __iomem *addr, const struct dpu_mdss_version *mdss_rev);
-
-/**
- * dpu_hw_intf_destroy(): Destroys INTF driver context
- * @intf:   Pointer to INTF driver context
- */
-void dpu_hw_intf_destroy(struct dpu_hw_intf *intf);
+struct dpu_hw_intf *dpu_hw_intf_init(struct drm_device *dev,
+				     const struct dpu_intf_cfg *cfg,
+				     void __iomem *addr,
+				     const struct dpu_mdss_version *mdss_rev);
 
 #endif /*_DPU_HW_INTF_H */

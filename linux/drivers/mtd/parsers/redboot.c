@@ -203,7 +203,7 @@ nogood:
 		if (!redboot_checksum(&buf[i]))
 			break;
 
-		new_fl = kmalloc(sizeof(struct fis_list), GFP_KERNEL);
+		new_fl = kmalloc_obj(struct fis_list);
 		namelen += strlen(buf[i].name) + 1;
 		if (!new_fl) {
 			ret = -ENOMEM;
@@ -270,29 +270,22 @@ nogood:
 
 		strcpy(names, fl->img->name);
 #ifdef CONFIG_MTD_REDBOOT_PARTS_READONLY
-		if (!memcmp(names, "RedBoot", 8) ||
-		    !memcmp(names, "RedBoot config", 15) ||
-		    !memcmp(names, "FIS directory", 14)) {
+		if (!strcmp(names, "RedBoot") ||
+		    !strcmp(names, "RedBoot config") ||
+		    !strcmp(names, "FIS directory")) {
 			parts[i].mask_flags = MTD_WRITEABLE;
 		}
 #endif
 		names += strlen(names) + 1;
 
-		if (fl->next && fl->img->flash_base + fl->img->size + master->erasesize <= fl->next->img->flash_base) {
-			if (!strcmp(parts[i].name, "rootfs")) {
-				parts[i].size = fl->next->img->flash_base;
-				parts[i].size &= ~(master->erasesize - 1);
-				parts[i].size -= parts[i].offset;
 #ifdef CONFIG_MTD_REDBOOT_PARTS_UNALLOCATED
-				nrparts--;
-			} else {
-				i++;
-				parts[i].offset = parts[i-1].size + parts[i-1].offset;
-				parts[i].size = fl->next->img->flash_base - parts[i].offset;
-				parts[i].name = nullname;
-#endif
-			}
+		if (fl->next && fl->img->flash_base + fl->img->size + master->erasesize <= fl->next->img->flash_base) {
+			i++;
+			parts[i].offset = parts[i - 1].size + parts[i - 1].offset;
+			parts[i].size = fl->next->img->flash_base - parts[i].offset;
+			parts[i].name = nullname;
 		}
+#endif
 		tmp_fl = fl;
 		fl = fl->next;
 		kfree(tmp_fl);

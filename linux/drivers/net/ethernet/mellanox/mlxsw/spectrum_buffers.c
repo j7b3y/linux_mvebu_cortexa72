@@ -399,11 +399,13 @@ void mlxsw_sp_hdroom_bufs_reset_sizes(struct mlxsw_sp_port *mlxsw_sp_port,
 				      struct mlxsw_sp_hdroom *hdroom)
 {
 	struct mlxsw_sp *mlxsw_sp = mlxsw_sp_port->mlxsw_sp;
+	unsigned int max_mtu = mlxsw_sp_port->dev->max_mtu;
 	u16 reserve_cells;
 	int i;
 
+	max_mtu += MLXSW_PORT_ETH_FRAME_HDR;
 	/* Internal buffer. */
-	reserve_cells = mlxsw_sp_hdroom_int_buf_size_get(mlxsw_sp, mlxsw_sp_port->max_mtu,
+	reserve_cells = mlxsw_sp_hdroom_int_buf_size_get(mlxsw_sp, max_mtu,
 							 mlxsw_sp_port->max_speed);
 	reserve_cells = mlxsw_sp_port_headroom_8x_adjust(mlxsw_sp_port, reserve_cells);
 	hdroom->int_buf.reserve_cells = reserve_cells;
@@ -613,7 +615,9 @@ static int mlxsw_sp_port_headroom_init(struct mlxsw_sp_port *mlxsw_sp_port)
 	mlxsw_sp_hdroom_bufs_reset_sizes(mlxsw_sp_port, &hdroom);
 
 	/* Buffer 9 is used for control traffic. */
-	size9 = mlxsw_sp_port_headroom_8x_adjust(mlxsw_sp_port, mlxsw_sp_port->max_mtu);
+	size9 = mlxsw_sp_port_headroom_8x_adjust(mlxsw_sp_port,
+						 mlxsw_sp_port->dev->max_mtu +
+						 MLXSW_PORT_ETH_FRAME_HDR);
 	hdroom.bufs.buf[9].size_cells = mlxsw_sp_bytes_cells(mlxsw_sp, size9);
 
 	return __mlxsw_sp_hdroom_configure(mlxsw_sp_port, &hdroom, true);
@@ -624,8 +628,7 @@ static int mlxsw_sp_sb_port_init(struct mlxsw_sp *mlxsw_sp,
 {
 	struct mlxsw_sp_sb_pm *pms;
 
-	pms = kcalloc(mlxsw_sp->sb_vals->pool_count, sizeof(*pms),
-		      GFP_KERNEL);
+	pms = kzalloc_objs(*pms, mlxsw_sp->sb_vals->pool_count);
 	if (!pms)
 		return -ENOMEM;
 	sb_port->pms = pms;
@@ -644,14 +647,11 @@ static int mlxsw_sp_sb_ports_init(struct mlxsw_sp *mlxsw_sp)
 	int i;
 	int err;
 
-	mlxsw_sp->sb->ports = kcalloc(max_ports,
-				      sizeof(struct mlxsw_sp_sb_port),
-				      GFP_KERNEL);
+	mlxsw_sp->sb->ports = kzalloc_objs(struct mlxsw_sp_sb_port, max_ports);
 	if (!mlxsw_sp->sb->ports)
 		return -ENOMEM;
 
-	prs = kcalloc(mlxsw_sp->sb_vals->pool_count, sizeof(*prs),
-		      GFP_KERNEL);
+	prs = kzalloc_objs(*prs, mlxsw_sp->sb_vals->pool_count);
 	if (!prs) {
 		err = -ENOMEM;
 		goto err_alloc_prs;
@@ -1260,7 +1260,7 @@ int mlxsw_sp_buffers_init(struct mlxsw_sp *mlxsw_sp)
 	if (!MLXSW_CORE_RES_VALID(mlxsw_sp->core, MAX_HEADROOM_SIZE))
 		return -EIO;
 
-	mlxsw_sp->sb = kzalloc(sizeof(*mlxsw_sp->sb), GFP_KERNEL);
+	mlxsw_sp->sb = kzalloc_obj(*mlxsw_sp->sb);
 	if (!mlxsw_sp->sb)
 		return -ENOMEM;
 	mlxsw_sp->sb->cell_size = MLXSW_CORE_RES_GET(mlxsw_sp->core, CELL_SIZE);
@@ -1323,7 +1323,7 @@ int mlxsw_sp_port_buffers_init(struct mlxsw_sp_port *mlxsw_sp_port)
 {
 	int err;
 
-	mlxsw_sp_port->hdroom = kzalloc(sizeof(*mlxsw_sp_port->hdroom), GFP_KERNEL);
+	mlxsw_sp_port->hdroom = kzalloc_obj(*mlxsw_sp_port->hdroom);
 	if (!mlxsw_sp_port->hdroom)
 		return -ENOMEM;
 	mlxsw_sp_port->hdroom->mtu = mlxsw_sp_port->dev->mtu;

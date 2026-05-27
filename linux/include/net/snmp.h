@@ -36,11 +36,6 @@ struct snmp_mib {
 	.entry = _entry,			\
 }
 
-#define SNMP_MIB_SENTINEL {	\
-	.name = NULL,		\
-	.entry = 0,		\
-}
-
 /*
  * We use unsigned longs for most mibs but u64 for ipstats.
  */
@@ -124,21 +119,6 @@ struct linux_tls_mib {
 #define DECLARE_SNMP_STAT(type, name)	\
 	extern __typeof__(type) __percpu *name
 
-#ifdef CONFIG_PROC_STRIPPED
-#define __SNMP_STATS_DUMMY(mib)	\
-	do { (void) mib->mibs[0]; } while(0)
-
-#define __SNMP_INC_STATS(mib, field) __SNMP_STATS_DUMMY(mib)
-#define SNMP_INC_STATS_ATOMIC_LONG(mib, field) __SNMP_STATS_DUMMY(mib)
-#define SNMP_INC_STATS(mib, field) __SNMP_STATS_DUMMY(mib)
-#define SNMP_DEC_STATS(mib, field) __SNMP_STATS_DUMMY(mib)
-#define __SNMP_ADD_STATS(mib, field, addend) __SNMP_STATS_DUMMY(mib)
-#define SNMP_ADD_STATS(mib, field, addend) __SNMP_STATS_DUMMY(mib)
-#define SNMP_UPD_PO_STATS(mib, basefield, addend) __SNMP_STATS_DUMMY(mib)
-#define __SNMP_UPD_PO_STATS(mib, basefield, addend) __SNMP_STATS_DUMMY(mib)
-
-#else
-
 #define __SNMP_INC_STATS(mib, field)	\
 			__this_cpu_inc(mib->mibs[field])
 
@@ -169,13 +149,12 @@ struct linux_tls_mib {
 		__this_cpu_add(ptr[basefield##OCTETS], addend);	\
 	} while (0)
 
-#endif
 
-#if (BITS_PER_LONG==32) && !defined(CONFIG_PROC_STRIPPED)
+#if BITS_PER_LONG==32
 
 #define __SNMP_ADD_STATS64(mib, field, addend) 				\
 	do {								\
-		__typeof__(*mib) *ptr = raw_cpu_ptr(mib);		\
+		TYPEOF_UNQUAL(*mib) *ptr = raw_cpu_ptr(mib);		\
 		u64_stats_update_begin(&ptr->syncp);			\
 		ptr->mibs[field] += addend;				\
 		u64_stats_update_end(&ptr->syncp);			\
@@ -192,8 +171,7 @@ struct linux_tls_mib {
 #define SNMP_INC_STATS64(mib, field) SNMP_ADD_STATS64(mib, field, 1)
 #define __SNMP_UPD_PO_STATS64(mib, basefield, addend)			\
 	do {								\
-		__typeof__(*mib) *ptr;				\
-		ptr = raw_cpu_ptr((mib));				\
+		TYPEOF_UNQUAL(*mib) *ptr = raw_cpu_ptr(mib);		\
 		u64_stats_update_begin(&ptr->syncp);			\
 		ptr->mibs[basefield##PKTS]++;				\
 		ptr->mibs[basefield##OCTETS] += addend;			\

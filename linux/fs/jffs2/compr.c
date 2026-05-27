@@ -381,9 +381,6 @@ int __init jffs2_compressors_init(void)
 	ret = jffs2_lzo_init();
 	if (ret)
 		goto exit_dynrubin;
-	ret = jffs2_lzma_init();
-	if (ret)
-		goto exit_lzo;
 
 
 /* Setting default compression mode */
@@ -405,8 +402,6 @@ int __init jffs2_compressors_init(void)
 #endif
 	return 0;
 
-exit_lzo:
-	jffs2_lzo_exit();
 exit_dynrubin:
 	jffs2_dynrubin_exit();
 exit_runinmips:
@@ -422,7 +417,6 @@ exit:
 int jffs2_compressors_exit(void)
 {
 /* Unregistering compressors */
-	jffs2_lzma_exit();
 	jffs2_lzo_exit();
 	jffs2_dynrubin_exit();
 	jffs2_rubinmips_exit();

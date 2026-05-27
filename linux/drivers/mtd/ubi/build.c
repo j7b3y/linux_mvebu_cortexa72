@@ -36,7 +36,7 @@
 #define MTD_PARAM_LEN_MAX 64
 
 /* Maximum number of comma-separated items in the 'mtd=' parameter */
-#define MTD_PARAM_MAX_COUNT 5
+#define MTD_PARAM_MAX_COUNT 6
 
 /* Maximum value for the number of bad PEBs per 1024 PEBs */
 #define MAX_MTD_UBI_BEB_LIMIT 768
@@ -55,6 +55,7 @@
  * @vid_hdr_offs: VID header offset
  * @max_beb_per1024: maximum expected number of bad PEBs per 1024 PEBs
  * @enable_fm: enable fastmap when value is non-zero
+ * @need_resv_pool: reserve pool->max_size pebs when value is none-zero
  */
 struct mtd_dev_param {
 	char name[MTD_PARAM_LEN_MAX];
@@ -62,6 +63,7 @@ struct mtd_dev_param {
 	int vid_hdr_offs;
 	int max_beb_per1024;
 	int enable_fm;
+	int need_resv_pool;
 };
 
 /* Numbers of elements set in the @mtd_dev_param array */
@@ -110,7 +112,7 @@ static struct attribute *ubi_class_attrs[] = {
 ATTRIBUTE_GROUPS(ubi_class);
 
 /* Root UBI "class" object (corresponds to '/<sysfs>/class/ubi/') */
-struct class ubi_class = {
+const struct class ubi_class = {
 	.name		= UBI_NAME_STR,
 	.class_groups	= ubi_class_groups,
 };
@@ -829,6 +831,7 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
  * @vid_hdr_offset: VID header offset
  * @max_beb_per1024: maximum expected number of bad PEB per 1024 PEBs
  * @disable_fm: whether disable fastmap
+ * @need_resv_pool: whether reserve pebs to fill fm_pool
  *
  * This function attaches MTD device @mtd_dev to UBI and assign @ubi_num number
  * to the newly created UBI device, unless @ubi_num is %UBI_DEV_NUM_AUTO, in
@@ -844,7 +847,8 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
  * @ubi_devices_mutex.
  */
 int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
-		       int vid_hdr_offset, int max_beb_per1024, bool disable_fm)
+		       int vid_hdr_offset, int max_beb_per1024, bool disable_fm,
+		       bool need_resv_pool)
 {
 	struct ubi_device *ubi;
 	int i, err;
@@ -926,7 +930,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 		}
 	}
 
-	ubi = kzalloc(sizeof(struct ubi_device), GFP_KERNEL);
+	ubi = kzalloc_obj(struct ubi_device);
 	if (!ubi)
 		return -ENOMEM;
 
@@ -955,6 +959,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 		UBI_FM_MIN_POOL_SIZE);
 
 	ubi->fm_wl_pool.max_size = ubi->fm_pool.max_size / 2;
+	ubi->fm_pool_rsv_cnt = need_resv_pool ? ubi->fm_pool.max_size : 0;
 	ubi->fm_disabled = (!fm_autoconvert || disable_fm) ? 1 : 0;
 	if (fm_debug)
 		ubi_enable_dbg_chk_fastmap(ubi);
@@ -1242,7 +1247,7 @@ static void ubi_notify_add(struct mtd_info *mtd)
 
 	/* called while holding mtd_table_mutex */
 	mutex_lock_nested(&ubi_devices_mutex, SINGLE_DEPTH_NESTING);
-	err = ubi_attach_mtd_dev(mtd, UBI_DEV_NUM_AUTO, 0, 0, false);
+	err = ubi_attach_mtd_dev(mtd, UBI_DEV_NUM_AUTO, 0, 0, false, false);
 	mutex_unlock(&ubi_devices_mutex);
 	if (err < 0)
 		__put_mtd_device(mtd);
@@ -1257,80 +1262,6 @@ static struct mtd_notifier ubi_mtd_notifier = {
 	.add = ubi_notify_add,
 	.remove = ubi_notify_remove,
 };
-
-
-/*
- * This function tries attaching mtd partitions named either "ubi" or "data"
- * during boot.
- */
-static void __init ubi_auto_attach(void)
-{
-	int err;
-	struct mtd_info *mtd;
-	struct device_node *np;
-	loff_t offset = 0;
-	size_t len;
-	char magic[4];
-
-	/* try attaching mtd device named "ubi" or "data" */
-	mtd = open_mtd_device("ubi");
-	if (IS_ERR(mtd))
-		mtd = open_mtd_device("data");
-
-	if (IS_ERR(mtd))
-		return;
-
-	/* skip "linux,ubi" mtd as it has already been attached */
-	np = mtd_get_of_node(mtd);
-	if (of_device_is_compatible(np, "linux,ubi"))
-		goto cleanup;
-
-	/* get the first not bad block */
-	if (mtd_can_have_bb(mtd))
-		while (mtd_block_isbad(mtd, offset)) {
-			offset += mtd->erasesize;
-
-			if (offset > mtd->size) {
-				pr_err("UBI error: Failed to find a non-bad "
-				       "block on mtd%d\n", mtd->index);
-				goto cleanup;
-			}
-		}
-
-	/* check if the read from flash was successful */
-	err = mtd_read(mtd, offset, 4, &len, (void *) magic);
-	if ((err && !mtd_is_bitflip(err)) || len != 4) {
-		pr_err("UBI error: unable to read from mtd%d\n", mtd->index);
-		goto cleanup;
-	}
-
-	/* check for a valid ubi magic */
-	if (strncmp(magic, "UBI#", 4)) {
-		pr_err("UBI error: no valid UBI magic found inside mtd%d\n", mtd->index);
-		goto cleanup;
-	}
-
-	/* don't auto-add media types where UBI doesn't makes sense */
-	if (mtd->type != MTD_NANDFLASH &&
-	    mtd->type != MTD_NORFLASH &&
-	    mtd->type != MTD_DATAFLASH &&
-	    mtd->type != MTD_MLCNANDFLASH)
-		goto cleanup;
-
-	mutex_lock(&ubi_devices_mutex);
-	pr_notice("UBI: auto-attach mtd%d\n", mtd->index);
-	err = ubi_attach_mtd_dev(mtd, UBI_DEV_NUM_AUTO, 0, 0, false);
-	mutex_unlock(&ubi_devices_mutex);
-	if (err < 0) {
-		pr_err("UBI error: cannot attach mtd%d\n", mtd->index);
-		goto cleanup;
-	}
-
-	return;
-
-cleanup:
-	put_mtd_device(mtd);
-}
 
 static int __init ubi_init_attach(void)
 {
@@ -1357,7 +1288,8 @@ static int __init ubi_init_attach(void)
 		mutex_lock(&ubi_devices_mutex);
 		err = ubi_attach_mtd_dev(mtd, p->ubi_num,
 					 p->vid_hdr_offs, p->max_beb_per1024,
-					 p->enable_fm == 0);
+					 p->enable_fm == 0,
+					 p->need_resv_pool != 0);
 		mutex_unlock(&ubi_devices_mutex);
 		if (err < 0) {
 			pr_err("UBI error: cannot attach mtd%d\n",
@@ -1381,12 +1313,6 @@ static int __init ubi_init_attach(void)
 				goto out_detach;
 		}
 	}
-
-	/* auto-attach mtd devices only if built-in to the kernel and no ubi.mtd
-	 * parameter was given */
-	if (IS_ENABLED(CONFIG_MTD_ROOTFS_ROOT_DEV) &&
-	    !ubi_is_module() && !mtd_devs)
-		ubi_auto_attach();
 
 	return 0;
 
@@ -1446,7 +1372,7 @@ static int __init ubi_init(void)
 
 		/* See comment above re-ubi_is_module(). */
 		if (ubi_is_module())
-			goto out_slab;
+			goto out_debugfs;
 	}
 
 	register_mtd_user(&ubi_mtd_notifier);
@@ -1461,6 +1387,9 @@ static int __init ubi_init(void)
 
 out_mtd_notifier:
 	unregister_mtd_user(&ubi_mtd_notifier);
+	ubiblock_exit();
+out_debugfs:
+	ubi_debugfs_exit();
 out_slab:
 	kmem_cache_destroy(ubi_wl_entry_slab);
 out_dev_unreg:
@@ -1608,7 +1537,7 @@ static int ubi_mtd_param_parse(const char *val, const struct kernel_param *kp)
 	if (token) {
 		int err = kstrtoint(token, 10, &p->ubi_num);
 
-		if (err) {
+		if (err || p->ubi_num < UBI_DEV_NUM_AUTO) {
 			pr_err("UBI error: bad value for ubi_num parameter: %s\n",
 			       token);
 			return -EINVAL;
@@ -1628,6 +1557,18 @@ static int ubi_mtd_param_parse(const char *val, const struct kernel_param *kp)
 	} else
 		p->enable_fm = 0;
 
+	token = tokens[5];
+	if (token) {
+		int err = kstrtoint(token, 10, &p->need_resv_pool);
+
+		if (err) {
+			pr_err("UBI error: bad value for need_resv_pool parameter: %s\n",
+				token);
+			return -EINVAL;
+		}
+	} else
+		p->need_resv_pool = 0;
+
 	mtd_devs += 1;
 	return 0;
 }
@@ -1641,6 +1582,7 @@ MODULE_PARM_DESC(mtd, "MTD devices to attach. Parameter format: mtd=<name|num|pa
 		      __stringify(CONFIG_MTD_UBI_BEB_LIMIT) ") if 0)\n"
 		      "Optional \"ubi_num\" parameter specifies UBI device number which have to be assigned to the newly created UBI device (assigned automatically by default)\n"
 		      "Optional \"enable_fm\" parameter determines whether to enable fastmap during attach. If the value is non-zero, fastmap is enabled. Default value is 0.\n"
+		      "Optional \"need_resv_pool\" parameter determines whether to reserve pool->max_size pebs during attach. If the value is non-zero, peb reservation is enabled. Default value is 0.\n"
 		      "\n"
 		      "Example 1: mtd=/dev/mtd0 - attach MTD device /dev/mtd0.\n"
 		      "Example 2: mtd=content,1984 mtd=4 - attach MTD device with name \"content\" using VID header offset 1984, and MTD device number 4 with default VID header offset.\n"

@@ -19,15 +19,17 @@ properties:
   compatible:
     const: iei,wt61p803-puzzle-hwmon
 
-  "#address-cells":
+  '#address-cells':
     const: 1
 
-  "#size-cells":
+  '#size-cells':
     const: 0
 
 patternProperties:
-  "^fan-group@[0-1]$":
+  '^fan-group@[0-1]$':
     type: object
+    additionalProperties: false
+
     properties:
       reg:
         minimum: 0
@@ -35,19 +37,23 @@ patternProperties:
         description:
           Fan group ID
 
+      '#cooling-cells':
+        const: 2
+
       cooling-levels:
         minItems: 1
         maxItems: 255
         description:
           Cooling levels for the fans (PWM value mapping)
-    description: |
-      Properties for each fan group.
+
     required:
       - reg
+      - '#cooling-cells'
+      - cooling-levels
 
 required:
   - compatible
-  - "#address-cells"
-  - "#size-cells"
+  - '#address-cells'
+  - '#size-cells'
 
 additionalProperties: false

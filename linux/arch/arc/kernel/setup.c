@@ -390,7 +390,7 @@ static void arc_chk_core_config(struct cpuinfo_arc *info)
 #ifdef CONFIG_ARC_HAS_DCCM
 	/*
 	 * DCCM can be arbit placed in hardware.
-	 * Make sure it's placement/sz matches what Linux is built with
+	 * Make sure its placement/sz matches what Linux is built with
 	 */
 	if ((unsigned int)__arc_dccm_base != info->dccm.base)
 		panic("Linux built with incorrect DCCM Base address\n");
@@ -450,8 +450,6 @@ static inline bool uboot_arg_invalid(unsigned long addr)
 /* We always pass 0 as magic from U-boot */
 #define UBOOT_MAGIC_VALUE	0
 
-extern struct boot_param_header __image_dtb;
-
 void __init handle_uboot_args(void)
 {
 	bool use_embedded_dtb = true;
@@ -490,7 +488,7 @@ void __init handle_uboot_args(void)
 ignore_uboot_args:
 
 	if (use_embedded_dtb) {
-		machine_desc = setup_machine_fdt(&__image_dtb);
+		machine_desc = setup_machine_fdt(__dtb_start);
 		if (!machine_desc)
 			panic("Embedded DT invalid\n");
 	}

@@ -403,7 +403,6 @@ static inline void local_r4k___flush_cache_all(void * args)
 
 	default:
 		r4k_blast_dcache();
-		mb(); /* cache instructions may be reordered */
 		r4k_blast_icache();
 		break;
 	}
@@ -484,10 +483,8 @@ static inline void local_r4k_flush_cache_range(void * args)
 	if (cpu_has_dc_aliases || (exec && !cpu_has_ic_fills_f_dc))
 		r4k_blast_dcache();
 	/* If executable, blast stale lines from icache */
-	if (exec) {
-		mb(); /* cache instructions may be reordered */
+	if (exec)
 		r4k_blast_icache();
-	}
 }
 
 static void r4k_flush_cache_range(struct vm_area_struct *vma,
@@ -589,13 +586,8 @@ static inline void local_r4k_flush_cache_page(void *args)
 	if (cpu_has_dc_aliases || (exec && !cpu_has_ic_fills_f_dc)) {
 		vaddr ? r4k_blast_dcache_page(addr) :
 			r4k_blast_dcache_user_page(addr);
-		if (exec)
-			mb(); /* cache instructions may be reordered */
-
-		if (exec && !cpu_icache_snoops_remote_store) {
+		if (exec && !cpu_icache_snoops_remote_store)
 			r4k_blast_scache_page(addr);
-			mb(); /* cache instructions may be reordered */
-		}
 	}
 	if (exec) {
 		if (vaddr && cpu_has_vtag_icache && mm == current->active_mm) {
@@ -662,7 +654,6 @@ static inline void __local_r4k_flush_icache_range(unsigned long start,
 			else
 				blast_dcache_range(start, end);
 		}
-		mb(); /* cache instructions may be reordered */
 	}
 
 	if (type == R4K_INDEX ||
@@ -1494,10 +1485,6 @@ static void loongson3_sc_init(void)
 	return;
 }
 
-extern int r5k_sc_init(void);
-extern int rm7k_sc_init(void);
-extern int mips_sc_init(void);
-
 static void setup_scache(void)
 {
 	struct cpuinfo_mips *c = &current_cpu_data;
@@ -1663,7 +1650,7 @@ static void coherency_setup(void)
 
 	/*
 	 * c0_status.cu=0 specifies that updates by the sc instruction use
-	 * the coherency mode specified by the TLB; 1 means cachable
+	 * the coherency mode specified by the TLB; 1 means cacheable
 	 * coherent update on write will be used.  Not all processors have
 	 * this bit and; some wire it to zero, others like Toshiba had the
 	 * silly idea of putting something else there ...
@@ -1837,7 +1824,7 @@ static struct notifier_block r4k_cache_pm_notifier_block = {
 	.notifier_call = r4k_cache_pm_notifier,
 };
 
-int __init r4k_cache_init_pm(void)
+static int __init r4k_cache_init_pm(void)
 {
 	return cpu_pm_register_notifier(&r4k_cache_pm_notifier_block);
 }

@@ -17,8 +17,8 @@
 #include <linux/slab.h>
 #include <linux/uuid.h>
 #include <drm/drm_connector.h>
-#include <drm/i915_component.h>
-#include <drm/i915_gsc_proxy_mei_interface.h>
+#include <drm/intel/i915_component.h>
+#include <drm/intel/i915_gsc_proxy_mei_interface.h>
 
 /**
  * mei_gsc_proxy_send - Sends a proxy message to ME FW.
@@ -141,7 +141,7 @@ static int mei_gsc_proxy_probe(struct mei_cl_device *cldev,
 		goto enable_err_exit;
 	}
 
-	comp_master = kzalloc(sizeof(*comp_master), GFP_KERNEL);
+	comp_master = kzalloc_obj(*comp_master);
 	if (!comp_master) {
 		ret = -ENOMEM;
 		goto err_exit;

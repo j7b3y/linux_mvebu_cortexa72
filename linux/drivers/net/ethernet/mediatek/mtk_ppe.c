@@ -8,8 +8,11 @@
 #include <linux/platform_device.h>
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
+
 #include <net/dst_metadata.h>
 #include <net/dsa.h>
+#include <net/ipv6.h>
+
 #include "mtk_eth_soc.h"
 #include "mtk_ppe.h"
 #include "mtk_ppe_regs.h"
@@ -80,9 +83,9 @@ static int mtk_ppe_mib_wait_busy(struct mtk_ppe *ppe)
 	int ret;
 	u32 val;
 
-	ret = readl_poll_timeout_atomic(ppe->base + MTK_PPE_MIB_SER_CR, val,
-					!(val & MTK_PPE_MIB_SER_CR_ST),
-					20, MTK_PPE_WAIT_TIMEOUT_US);
+	ret = readl_poll_timeout(ppe->base + MTK_PPE_MIB_SER_CR, val,
+				 !(val & MTK_PPE_MIB_SER_CR_ST),
+				 20, MTK_PPE_WAIT_TIMEOUT_US);
 
 	if (ret)
 		dev_err(ppe->dev, "MIB table busy");
@@ -90,31 +93,17 @@ static int mtk_ppe_mib_wait_busy(struct mtk_ppe *ppe)
 	return ret;
 }
 
-static inline struct mtk_foe_accounting *
-mtk_ppe_acct_data(struct mtk_ppe *ppe, u16 index)
-{
-	if (!ppe->acct_table)
-		return NULL;
-
-	return ppe->acct_table + index * sizeof(struct mtk_foe_accounting);
-}
-
-struct mtk_foe_accounting *mtk_ppe_mib_entry_read(struct mtk_ppe *ppe, u16 index)
+static int mtk_mib_entry_read(struct mtk_ppe *ppe, u16 index, u64 *bytes, u64 *packets)
 {
 	u32 val, cnt_r0, cnt_r1, cnt_r2;
-	struct mtk_foe_accounting *acct;
 	int ret;
 
 	val = FIELD_PREP(MTK_PPE_MIB_SER_CR_ADDR, index) | MTK_PPE_MIB_SER_CR_ST;
 	ppe_w32(ppe, MTK_PPE_MIB_SER_CR, val);
 
-	acct = mtk_ppe_acct_data(ppe, index);
-	if (!acct)
-		return NULL;
-
 	ret = mtk_ppe_mib_wait_busy(ppe);
 	if (ret)
-		return acct;
+		return ret;
 
 	cnt_r0 = readl(ppe->base + MTK_PPE_MIB_SER_R0);
 	cnt_r1 = readl(ppe->base + MTK_PPE_MIB_SER_R1);
@@ -123,19 +112,19 @@ struct mtk_foe_accounting *mtk_ppe_mib_entry_read(struct mtk_ppe *ppe, u16 index
 	if (mtk_is_netsys_v3_or_greater(ppe->eth)) {
 		/* 64 bit for each counter */
 		u32 cnt_r3 = readl(ppe->base + MTK_PPE_MIB_SER_R3);
-		acct->bytes += ((u64)cnt_r1 << 32) | cnt_r0;
-		acct->packets += ((u64)cnt_r3 << 32) | cnt_r2;
+		*bytes = ((u64)cnt_r1 << 32) | cnt_r0;
+		*packets = ((u64)cnt_r3 << 32) | cnt_r2;
 	} else {
 		/* 48 bit byte counter, 40 bit packet counter */
 		u32 byte_cnt_low = FIELD_GET(MTK_PPE_MIB_SER_R0_BYTE_CNT_LOW, cnt_r0);
 		u32 byte_cnt_high = FIELD_GET(MTK_PPE_MIB_SER_R1_BYTE_CNT_HIGH, cnt_r1);
 		u32 pkt_cnt_low = FIELD_GET(MTK_PPE_MIB_SER_R1_PKT_CNT_LOW, cnt_r1);
 		u32 pkt_cnt_high = FIELD_GET(MTK_PPE_MIB_SER_R2_PKT_CNT_HIGH, cnt_r2);
-		acct->bytes += ((u64)byte_cnt_high << 32) | byte_cnt_low;
-		acct->packets += ((u64)pkt_cnt_high << 16) | pkt_cnt_low;
+		*bytes = ((u64)byte_cnt_high << 32) | byte_cnt_low;
+		*packets = ((u64)pkt_cnt_high << 16) | pkt_cnt_low;
 	}
 
-	return acct;
+	return 0;
 }
 
 static void mtk_ppe_cache_clear(struct mtk_ppe *ppe)
@@ -352,7 +341,6 @@ int mtk_foe_entry_set_ipv6_tuple(struct mtk_eth *eth,
 {
 	int type = mtk_get_ib1_pkt_type(eth, entry->ib1);
 	u32 *src, *dest;
-	int i;
 
 	switch (type) {
 	case MTK_PPE_PKT_TYPE_IPV4_DSLITE:
@@ -373,10 +361,8 @@ int mtk_foe_entry_set_ipv6_tuple(struct mtk_eth *eth,
 		return -EINVAL;
 	}
 
-	for (i = 0; i < 4; i++)
-		src[i] = be32_to_cpu(src_addr[i]);
-	for (i = 0; i < 4; i++)
-		dest[i] = be32_to_cpu(dest_addr[i]);
+	ipv6_addr_be32_to_cpu(src, src_addr);
+	ipv6_addr_be32_to_cpu(dest, dest_addr);
 
 	return 0;
 }
@@ -493,57 +479,63 @@ int mtk_foe_entry_set_queue(struct mtk_eth *eth, struct mtk_foe_entry *entry,
 	return 0;
 }
 
-static int
-mtk_flow_entry_match_len(struct mtk_eth *eth, struct mtk_foe_entry *entry)
-{
-	int type = mtk_get_ib1_pkt_type(eth, entry->ib1);
-
-	if (type > MTK_PPE_PKT_TYPE_IPV4_DSLITE)
-		return offsetof(struct mtk_foe_entry, ipv6._rsv);
-	else
-		return offsetof(struct mtk_foe_entry, ipv4.ib2);
-}
-
 static bool
 mtk_flow_entry_match(struct mtk_eth *eth, struct mtk_flow_entry *entry,
-		     struct mtk_foe_entry *data, int len)
+		     struct mtk_foe_entry *data)
 {
+	int type, len;
+
 	if ((data->ib1 ^ entry->data.ib1) & MTK_FOE_IB1_UDP)
 		return false;
+
+	type = mtk_get_ib1_pkt_type(eth, entry->data.ib1);
+	if (type > MTK_PPE_PKT_TYPE_IPV4_DSLITE)
+		len = offsetof(struct mtk_foe_entry, ipv6._rsv);
+	else
+		len = offsetof(struct mtk_foe_entry, ipv4.ib2);
 
 	return !memcmp(&entry->data.data, &data->data, len - 4);
 }
 
 static void
-__mtk_foe_entry_clear(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
-		      bool set_state)
+__mtk_foe_entry_clear(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
 {
+	struct hlist_head *head;
 	struct hlist_node *tmp;
 
 	if (entry->type == MTK_FLOW_TYPE_L2) {
 		rhashtable_remove_fast(&ppe->l2_flows, &entry->l2_node,
 				       mtk_flow_l2_ht_params);
 
-		hlist_for_each_entry_safe(entry, tmp, &entry->l2_flows, l2_list)
-			__mtk_foe_entry_clear(ppe, entry, set_state);
+		head = &entry->l2_flows;
+		hlist_for_each_entry_safe(entry, tmp, head, l2_data.list)
+			__mtk_foe_entry_clear(ppe, entry);
 		return;
 	}
 
-	if (entry->hash != 0xffff && set_state) {
+	hlist_del_init(&entry->list);
+	if (entry->hash != 0xffff) {
 		struct mtk_foe_entry *hwe = mtk_foe_get_entry(ppe, entry->hash);
 
 		hwe->ib1 &= ~MTK_FOE_IB1_STATE;
 		hwe->ib1 |= FIELD_PREP(MTK_FOE_IB1_STATE, MTK_FOE_STATE_INVALID);
 		dma_wmb();
 		mtk_ppe_cache_clear(ppe);
+
+		if (ppe->accounting) {
+			struct mtk_foe_accounting *acct;
+
+			acct = ppe->acct_table + entry->hash * sizeof(*acct);
+			acct->packets = 0;
+			acct->bytes = 0;
+		}
 	}
 	entry->hash = 0xffff;
 
 	if (entry->type != MTK_FLOW_TYPE_L2_SUBFLOW)
 		return;
 
-	hlist_del_init(&entry->l2_list);
-	hlist_del_init(&entry->list);
+	hlist_del_init(&entry->l2_data.list);
 	kfree(entry);
 }
 
@@ -559,94 +551,65 @@ static int __mtk_foe_entry_idle_time(struct mtk_ppe *ppe, u32 ib1)
 		return now - timestamp;
 }
 
-static bool
-mtk_flow_entry_update(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
-		      u64 *packets, u64 *bytes)
-{
-	struct mtk_foe_accounting *acct;
-	struct mtk_foe_entry foe = {};
-	struct mtk_foe_entry *hwe;
-	u16 hash = entry->hash;
-	bool ret = false;
-	int len;
-
-	if (hash == 0xffff)
-		return false;
-
-	hwe = mtk_foe_get_entry(ppe, hash);
-	len = mtk_flow_entry_match_len(ppe->eth, &entry->data);
-	memcpy(&foe, hwe, len);
-
-	if (!mtk_flow_entry_match(ppe->eth, entry, &foe, len) ||
-	    FIELD_GET(MTK_FOE_IB1_STATE, foe.ib1) != MTK_FOE_STATE_BIND) {
-		acct = mtk_ppe_acct_data(ppe, hash);
-		if (acct) {
-			entry->prev_packets += acct->packets;
-			entry->prev_bytes += acct->bytes;
-		}
-
-		goto out;
-	}
-
-	entry->data.ib1 = foe.ib1;
-	acct = mtk_ppe_mib_entry_read(ppe, hash);
-	ret = true;
-
-out:
-	if (acct) {
-		*packets += acct->packets;
-		*bytes += acct->bytes;
-	}
-
-	return ret;
-}
-
 static void
 mtk_flow_entry_update_l2(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
 {
 	u32 ib1_ts_mask = mtk_get_ib1_ts_mask(ppe->eth);
-	u64 *packets = &entry->packets;
-	u64 *bytes = &entry->bytes;
 	struct mtk_flow_entry *cur;
+	struct mtk_foe_entry *hwe;
 	struct hlist_node *tmp;
 	int idle;
 
 	idle = __mtk_foe_entry_idle_time(ppe, entry->data.ib1);
-	hlist_for_each_entry_safe(cur, tmp, &entry->l2_flows, l2_list) {
+	hlist_for_each_entry_safe(cur, tmp, &entry->l2_flows, l2_data.list) {
 		int cur_idle;
+		u32 ib1;
 
-		if (!mtk_flow_entry_update(ppe, cur, packets, bytes)) {
-			entry->prev_packets += cur->prev_packets;
-			entry->prev_bytes += cur->prev_bytes;
-			__mtk_foe_entry_clear(ppe, entry, false);
+		hwe = mtk_foe_get_entry(ppe, cur->hash);
+		ib1 = READ_ONCE(hwe->ib1);
+
+		if (FIELD_GET(MTK_FOE_IB1_STATE, ib1) != MTK_FOE_STATE_BIND) {
+			cur->hash = 0xffff;
+			__mtk_foe_entry_clear(ppe, cur);
 			continue;
 		}
 
-		cur_idle = __mtk_foe_entry_idle_time(ppe, cur->data.ib1);
+		cur_idle = __mtk_foe_entry_idle_time(ppe, ib1);
 		if (cur_idle >= idle)
 			continue;
 
 		idle = cur_idle;
 		entry->data.ib1 &= ~ib1_ts_mask;
-		entry->data.ib1 |= cur->data.ib1 & ib1_ts_mask;
+		entry->data.ib1 |= ib1 & ib1_ts_mask;
 	}
 }
 
-void mtk_foe_entry_get_stats(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
-			     int *idle)
+static void
+mtk_flow_entry_update(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
 {
-	entry->packets = entry->prev_packets;
-	entry->bytes = entry->prev_bytes;
+	struct mtk_foe_entry foe = {};
+	struct mtk_foe_entry *hwe;
 
 	spin_lock_bh(&ppe_lock);
 
-	if (entry->type == MTK_FLOW_TYPE_L2)
+	if (entry->type == MTK_FLOW_TYPE_L2) {
 		mtk_flow_entry_update_l2(ppe, entry);
-	else
-		mtk_flow_entry_update(ppe, entry, &entry->packets, &entry->bytes);
+		goto out;
+	}
 
-	*idle = __mtk_foe_entry_idle_time(ppe, entry->data.ib1);
+	if (entry->hash == 0xffff)
+		goto out;
 
+	hwe = mtk_foe_get_entry(ppe, entry->hash);
+	memcpy(&foe, hwe, ppe->eth->soc->foe_entry_size);
+	if (!mtk_flow_entry_match(ppe->eth, entry, &foe)) {
+		entry->hash = 0xffff;
+		goto out;
+	}
+
+	entry->data.ib1 = foe.ib1;
+
+out:
 	spin_unlock_bh(&ppe_lock);
 }
 
@@ -654,7 +617,6 @@ static void
 __mtk_foe_entry_commit(struct mtk_ppe *ppe, struct mtk_foe_entry *entry,
 		       u16 hash)
 {
-	struct mtk_foe_accounting *acct;
 	struct mtk_eth *eth = ppe->eth;
 	u16 timestamp = mtk_eth_timestamp(eth);
 	struct mtk_foe_entry *hwe;
@@ -685,20 +647,13 @@ __mtk_foe_entry_commit(struct mtk_ppe *ppe, struct mtk_foe_entry *entry,
 
 	dma_wmb();
 
-	acct = mtk_ppe_mib_entry_read(ppe, hash);
-	if (acct) {
-		acct->packets = 0;
-		acct->bytes = 0;
-	}
-
 	mtk_ppe_cache_clear(ppe);
 }
 
 void mtk_foe_entry_clear(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
 {
 	spin_lock_bh(&ppe_lock);
-	__mtk_foe_entry_clear(ppe, entry, true);
-	hlist_del_init(&entry->list);
+	__mtk_foe_entry_clear(ppe, entry);
 	spin_unlock_bh(&ppe_lock);
 }
 
@@ -745,39 +700,39 @@ mtk_foe_entry_commit_subflow(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
 {
 	const struct mtk_soc_data *soc = ppe->eth->soc;
 	struct mtk_flow_entry *flow_info;
+	struct mtk_foe_entry foe = {}, *hwe;
 	struct mtk_foe_mac_info *l2;
-	struct mtk_foe_entry *hwe;
 	u32 ib1_mask = mtk_get_ib1_pkt_type_mask(ppe->eth) | MTK_FOE_IB1_UDP;
 	int type;
 
-	flow_info = kzalloc(sizeof(*flow_info), GFP_ATOMIC);
+	flow_info = kzalloc_obj(*flow_info, GFP_ATOMIC);
 	if (!flow_info)
 		return;
 
+	flow_info->l2_data.base_flow = entry;
 	flow_info->type = MTK_FLOW_TYPE_L2_SUBFLOW;
 	flow_info->hash = hash;
 	hlist_add_head(&flow_info->list,
 		       &ppe->foe_flow[hash / soc->hash_offset]);
-	hlist_add_head(&flow_info->l2_list, &entry->l2_flows);
+	hlist_add_head(&flow_info->l2_data.list, &entry->l2_flows);
 
 	hwe = mtk_foe_get_entry(ppe, hash);
-	memcpy(&flow_info->data, hwe, soc->foe_entry_size);
-	flow_info->data.ib1 &= ib1_mask;
-	flow_info->data.ib1 |= entry->data.ib1 & ~ib1_mask;
+	memcpy(&foe, hwe, soc->foe_entry_size);
+	foe.ib1 &= ib1_mask;
+	foe.ib1 |= entry->data.ib1 & ~ib1_mask;
 
-	l2 = mtk_foe_entry_l2(ppe->eth, &flow_info->data);
+	l2 = mtk_foe_entry_l2(ppe->eth, &foe);
 	memcpy(l2, &entry->data.bridge.l2, sizeof(*l2));
 
-	type = mtk_get_ib1_pkt_type(ppe->eth, flow_info->data.ib1);
+	type = mtk_get_ib1_pkt_type(ppe->eth, foe.ib1);
 	if (type == MTK_PPE_PKT_TYPE_IPV4_HNAPT)
-		memcpy(&flow_info->data.ipv4.new, &flow_info->data.ipv4.orig,
-		       sizeof(flow_info->data.ipv4.new));
+		memcpy(&foe.ipv4.new, &foe.ipv4.orig, sizeof(foe.ipv4.new));
 	else if (type >= MTK_PPE_PKT_TYPE_IPV6_ROUTE_3T && l2->etype == ETH_P_IP)
 		l2->etype = ETH_P_IPV6;
 
-	*mtk_foe_entry_ib2(ppe->eth, &flow_info->data) = entry->data.bridge.ib2;
+	*mtk_foe_entry_ib2(ppe->eth, &foe) = entry->data.bridge.ib2;
 
-	__mtk_foe_entry_commit(ppe, &flow_info->data, hash);
+	__mtk_foe_entry_commit(ppe, &foe, hash);
 }
 
 void __mtk_ppe_check_skb(struct mtk_ppe *ppe, struct sk_buff *skb, u16 hash)
@@ -787,11 +742,9 @@ void __mtk_ppe_check_skb(struct mtk_ppe *ppe, struct sk_buff *skb, u16 hash)
 	struct mtk_foe_entry *hwe = mtk_foe_get_entry(ppe, hash);
 	struct mtk_flow_entry *entry;
 	struct mtk_foe_bridge key = {};
-	struct mtk_foe_entry foe = {};
 	struct hlist_node *n;
 	struct ethhdr *eh;
 	bool found = false;
-	int entry_len;
 	u8 *tag;
 
 	spin_lock_bh(&ppe_lock);
@@ -799,14 +752,20 @@ void __mtk_ppe_check_skb(struct mtk_ppe *ppe, struct sk_buff *skb, u16 hash)
 	if (FIELD_GET(MTK_FOE_IB1_STATE, hwe->ib1) == MTK_FOE_STATE_BIND)
 		goto out;
 
-	entry_len = mtk_flow_entry_match_len(ppe->eth, hwe);
-	memcpy(&foe, hwe, entry_len);
-
 	hlist_for_each_entry_safe(entry, n, head, list) {
-		if (found ||
-		    !mtk_flow_entry_match(ppe->eth, entry, &foe, entry_len)) {
+		if (entry->type == MTK_FLOW_TYPE_L2_SUBFLOW) {
+			if (unlikely(FIELD_GET(MTK_FOE_IB1_STATE, hwe->ib1) ==
+				     MTK_FOE_STATE_BIND))
+				continue;
+
+			entry->hash = 0xffff;
+			__mtk_foe_entry_clear(ppe, entry);
+			continue;
+		}
+
+		if (found || !mtk_flow_entry_match(ppe->eth, entry, hwe)) {
 			if (entry->hash != 0xffff)
-				__mtk_foe_entry_clear(ppe, entry, false);
+				entry->hash = 0xffff;
 			continue;
 		}
 
@@ -855,6 +814,13 @@ out:
 	spin_unlock_bh(&ppe_lock);
 }
 
+int mtk_foe_entry_idle_time(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
+{
+	mtk_flow_entry_update(ppe, entry);
+
+	return __mtk_foe_entry_idle_time(ppe, entry->data.ib1);
+}
+
 int mtk_ppe_prepare_reset(struct mtk_ppe *ppe)
 {
 	if (!ppe)
@@ -880,6 +846,32 @@ int mtk_ppe_prepare_reset(struct mtk_ppe *ppe)
 	usleep_range(10000, 11000);
 
 	return mtk_ppe_wait_busy(ppe);
+}
+
+struct mtk_foe_accounting *mtk_foe_entry_get_mib(struct mtk_ppe *ppe, u32 index,
+						 struct mtk_foe_accounting *diff)
+{
+	struct mtk_foe_accounting *acct;
+	int size = sizeof(struct mtk_foe_accounting);
+	u64 bytes, packets;
+
+	if (!ppe->accounting)
+		return NULL;
+
+	if (mtk_mib_entry_read(ppe, index, &bytes, &packets))
+		return NULL;
+
+	acct = ppe->acct_table + index * size;
+
+	acct->bytes += bytes;
+	acct->packets += packets;
+
+	if (diff) {
+		diff->bytes = bytes;
+		diff->packets = packets;
+	}
+
+	return acct;
 }
 
 struct mtk_ppe *mtk_ppe_init(struct mtk_eth *eth, void __iomem *base, int index)
@@ -979,6 +971,36 @@ static void mtk_ppe_init_foe_table(struct mtk_ppe *ppe)
 			hwe->ib1 |= MTK_FOE_IB1_STATIC;
 		}
 	}
+}
+
+void mtk_ppe_update_mtu(struct mtk_ppe *ppe, int mtu)
+{
+	int base;
+	u32 val;
+
+	if (!ppe)
+		return;
+
+	/* The PPE checks output frame size against per-tag-layer MTU limits,
+	 * treating PPPoE and DSA tags just like 802.1Q VLAN tags. The Linux
+	 * device MTU already accounts for PPPoE (PPPOE_SES_HLEN) and DSA tag
+	 * overhead, but 802.1Q VLAN tags are handled transparently without
+	 * being reflected by the lower device MTU being increased by 4.
+	 * Use the maximum MTU across all GMAC interfaces so that PPE output
+	 * frame limits are sufficiently high regardless of which port a flow
+	 * egresses through.
+	 */
+	base = ETH_HLEN + mtu;
+
+	val = FIELD_PREP(MTK_PPE_VLAN_MTU0_NONE, base) |
+	      FIELD_PREP(MTK_PPE_VLAN_MTU0_1TAG, base + VLAN_HLEN);
+	ppe_w32(ppe, MTK_PPE_VLAN_MTU0, val);
+
+	val = FIELD_PREP(MTK_PPE_VLAN_MTU1_2TAG,
+			 base + 2 * VLAN_HLEN) |
+	      FIELD_PREP(MTK_PPE_VLAN_MTU1_3TAG,
+			 base + 3 * VLAN_HLEN);
+	ppe_w32(ppe, MTK_PPE_VLAN_MTU1, val);
 }
 
 void mtk_ppe_start(struct mtk_ppe *ppe)

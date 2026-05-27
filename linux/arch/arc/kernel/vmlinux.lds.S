@@ -27,19 +27,6 @@ SECTIONS
 
 	. = CONFIG_LINUX_LINK_BASE;
 
-	/*
-	* In OpenWRT we want to patch built binary embedding .dtb of choice.
-	* This is implemented with "patch-dtb" utility which searches for
-	* "OWRTDTB:" string in first 16k of image and if it is found
-	* copies .dtb right after mentioned string.
-	*
-	* Note: "OWRTDTB:" won't be overwritten with .dtb, .dtb will follow it.
-	*/
-	.owrt : {
-		*(.owrt)
-	. = ALIGN(PAGE_SIZE);
-	}
-
 	_int_vec_base_lds = .;
 	.vector : {
 		*(.vector)
@@ -54,8 +41,8 @@ SECTIONS
 #endif
 
 	/*
-	 * The reason for having a seperate subsection .init.ramfs is to
-	 * prevent objump from including it in kernel dumps
+	 * The reason for having a separate subsection .init.ramfs is to
+	 * prevent objdump from including it in kernel dumps
 	 *
 	 * Reason for having .init.ramfs above .init is to make sure that the
 	 * binary blob is tucked away to one side, reducing the displacement
@@ -136,6 +123,7 @@ SECTIONS
 	_end = . ;
 
 	STABS_DEBUG
+	MODINFO
 	ELF_DETAILS
 	DISCARDS
 

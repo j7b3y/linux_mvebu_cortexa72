@@ -242,6 +242,8 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Patrick McHardy <kaber@trash.net>");
 MODULE_ALIAS("ipt_SNAT");
 MODULE_ALIAS("ipt_DNAT");
+MODULE_ALIAS("xt_SNAT");
+MODULE_ALIAS("xt_DNAT");
 MODULE_ALIAS("ip6t_SNAT");
 MODULE_ALIAS("ip6t_DNAT");
 MODULE_DESCRIPTION("SNAT and DNAT targets support");

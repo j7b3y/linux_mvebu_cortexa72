@@ -249,6 +249,17 @@ EOF
 fi
 fi
 
+if is_enabled CONFIG_MODULES; then
+cat <<EOF >> debian/control
+
+Package: linux-modules-${KERNELRELEASE}
+Architecture: $debarch
+Description: Linux kernel modules for ${KERNELRELEASE} on $debarch
+ This package contains the loadable kernel modules for ${KERNELRELEASE}
+ on the $debarch architecture.
+EOF
+fi
+
 if is_enabled CONFIG_DEBUG_INFO; then
 cat <<EOF >> debian/control
 

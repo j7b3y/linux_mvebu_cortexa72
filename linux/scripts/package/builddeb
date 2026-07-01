@@ -35,13 +35,9 @@ install_linux_image () {
 		${MAKE} -f ${srctree}/Makefile INSTALL_DTBS_PATH="${pdir}/usr/lib/linux-image-${KERNELRELEASE}" dtbs_install
 	fi
 
-	${MAKE} -f ${srctree}/Makefile INSTALL_MOD_PATH="${pdir}" INSTALL_MOD_STRIP=1 modules_install
-	rm -f "${pdir}/lib/modules/${KERNELRELEASE}/build"
-
 	# Install the kernel
 	if [ "${ARCH}" = um ] ; then
 		mkdir -p "${pdir}/usr/lib/uml/modules"
-		mv "${pdir}/lib/modules/${KERNELRELEASE}" "${pdir}/usr/lib/uml/modules/${KERNELRELEASE}"
 		mkdir -p "${pdir}/usr/bin" "${pdir}/usr/share/doc/${pname}"
 		cp System.map "${pdir}/usr/lib/uml/modules/${KERNELRELEASE}/System.map"
 		cp ${KCONFIG_CONFIG} "${pdir}/usr/share/doc/${pname}/config"
@@ -135,6 +131,18 @@ install_linux_image_dbg () {
 	ln -s lib/modules/${KERNELRELEASE}/vmlinux ${pdir}/usr/lib/debug/vmlinux-${KERNELRELEASE}
 }
 
+install_linux_modules () {
+	pname=$1
+	pdir=debian/$1
+
+	${MAKE} -f ${srctree}/Makefile INSTALL_MOD_PATH="${pdir}" INSTALL_MOD_STRIP=1 modules_install
+	rm -f "${pdir}/lib/modules/${KERNELRELEASE}/build"
+	if [ "${ARCH}" = um ]; then
+		mkdir -p "${pdir}/usr/lib/uml/modules"
+		mv "${pdir}/lib/modules/${KERNELRELEASE}" "${pdir}/usr/lib/uml/modules/${KERNELRELEASE}"
+	fi
+}
+
 install_kernel_headers () {
 	pdir=debian/$1
 	version=${1#linux-headers-}
@@ -171,6 +179,8 @@ linux-image-*|user-mode-linux-*)
 	install_linux_image "${package}";;
 linux-libc-dev)
 	install_libc_headers "${package}";;
+linux-modules-*)
+	install_linux_modules "${package}";;
 linux-headers-*)
 	install_kernel_headers "${package}";;
 esac
